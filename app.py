@@ -1,5 +1,7 @@
 import os
+import json
 import time
+import traceback
 import random
 import re
 import threading
@@ -68,6 +70,24 @@ classifier_path = cfg["classifier"]
 label_mapping_path = cfg["label_mapping"]
 model_config_path = cfg["model_config"]
 
+for required_file in (
+    embedder_path,
+    classifier_path,
+    label_mapping_path
+):
+    if not Path(required_file).exists():
+        raise SystemExit(
+            f"Model file missing: {required_file}\n"
+            "Copy the champion model files there "
+            "(paths are set in mic_benchmark/benchmark_config.toml)."
+        )
+
+if not Path(model_config_path).exists():
+    print(
+        f"WARNING: {model_config_path} not found, "
+        "falling back to default thresholds"
+    )
+
 segment_duration = float(
     cfg["segment_duration"]
 )
@@ -97,8 +117,24 @@ print(
     "Loading ONNX sessions for real champion model..."
 )
 
+session_options = mb.ort.SessionOptions()
+
+# Leave one core free for audio capture, the live display
+# and Flask; on a 4-core Pi the model would otherwise take all.
+session_options.intra_op_num_threads = max(
+    1,
+    (os.cpu_count() or 4) - 1
+)
+
+# Don't busy-wait between runs (steals CPU from the audio).
+session_options.add_session_config_entry(
+    "session.intra_op.allow_spinning",
+    "0"
+)
+
 embedder_sess = mb.ort.InferenceSession(
     str(embedder_path),
+    session_options,
     providers=["CPUExecutionProvider"]
 )
 
@@ -117,6 +153,13 @@ cls_in_name = (
     classifier_sess
     .get_inputs()[0]
     .name
+)
+
+print(
+    f"Model loaded: {embedder_path.name}, "
+    f"classifier threshold {classifier_threshold}, "
+    f"silence threshold {silence_threshold} dBFS, "
+    f"{session_options.intra_op_num_threads} threads"
 )
 
 
@@ -156,23 +199,60 @@ latest_status = {
 # LIVE VISUALIZATION
 # ============================================================
 
+# The browser shows the recording on a fixed 0..DURATION
+# timeline: waveform and spectrogram fill in from the left and
+# the playhead sits at the amount of audio actually recorded,
+# so the animation stays in step with what comes out of the
+# speakers.
+
 audio_lock = threading.Lock()
 
-
-# ------------------------------------------------------------
-# Rolling microphone buffer
-# ------------------------------------------------------------
-
-live_audio_buffer = np.array(
-    [],
-    dtype=np.float32
+RECORDING_SAMPLES = int(
+    DURATION
+    * DEVICE_SAMPLE_RATE
 )
 
-LIVE_BUFFER_SECONDS = 5
+WAVEFORM_POINTS = 180
 
-LIVE_BUFFER_SAMPLES = (
-    DEVICE_SAMPLE_RATE
-    * LIVE_BUFFER_SECONDS
+SPECTROGRAM_COLUMNS = 160
+SPECTROGRAM_ROWS = 64
+SPECTROGRAM_N_FFT = 2048
+
+SPECTROGRAM_HOP = (
+    RECORDING_SAMPLES
+    // SPECTROGRAM_COLUMNS
+)
+
+SPECTROGRAM_WINDOW = np.hanning(
+    SPECTROGRAM_N_FFT
+).astype(np.float32)
+
+# 0 - 8 kHz, the range the model sees after resampling to 16 kHz
+SPECTROGRAM_BINS = int(
+    (SAMPLE_RATE / 2)
+    / (DEVICE_SAMPLE_RATE / SPECTROGRAM_N_FFT)
+)
+
+SPECTROGRAM_ROW_EDGES = np.linspace(
+    0,
+    SPECTROGRAM_BINS,
+    SPECTROGRAM_ROWS + 1
+).astype(int)
+
+WAVEFORM_EDGES = np.linspace(
+    0,
+    RECORDING_SAMPLES,
+    WAVEFORM_POINTS + 1
+).astype(int)
+
+
+# ------------------------------------------------------------
+# Microphone audio of the current run (48 kHz)
+# ------------------------------------------------------------
+
+live_audio_buffer = np.zeros(
+    0,
+    dtype=np.float32
 )
 
 
@@ -180,16 +260,22 @@ LIVE_BUFFER_SAMPLES = (
 # Data sent to browser
 # ------------------------------------------------------------
 
-visualization_data = {
-    "active": False,
-    "waveform": [],
-    "spectrogram": [],
-    "sample_rate": SAMPLE_RATE,
-    "min_frequency": 0,
-    "max_frequency": SAMPLE_RATE // 2,
-    "elapsed": 0,
-    "duration": DURATION
-}
+def empty_visualization(active):
+    return {
+        "active": active,
+        "waveform": [],
+        "spectrogram": [],
+        "sample_rate": SAMPLE_RATE,
+        "min_frequency": 0,
+        "max_frequency": SAMPLE_RATE // 2,
+        "elapsed": 0,
+        "duration": DURATION
+    }
+
+
+visualization_data = empty_visualization(
+    False
+)
 
 
 # ============================================================
@@ -201,36 +287,109 @@ def reset_visualization():
     global visualization_data
 
     with audio_lock:
-        live_audio_buffer = np.array(
-            [],
+        live_audio_buffer = np.zeros(
+            0,
             dtype=np.float32
         )
 
-        visualization_data = {
-            "active": True,
-            "waveform": [],
-            "spectrogram": [],
-            "sample_rate": SAMPLE_RATE,
-            "min_frequency": 0,
-            "max_frequency": SAMPLE_RATE // 2,
-            "elapsed": 0,
-            "duration": DURATION
-        }
+        visualization_data = empty_visualization(
+            True
+        )
 
 
 # ============================================================
 # UPDATE LIVE VISUALIZATION
 # ============================================================
 
+def waveform_envelope(audio):
+    # Peak level per point across the whole recording time;
+    # points that haven't been recorded yet stay 0.
+    envelope = np.zeros(
+        WAVEFORM_POINTS,
+        dtype=np.float32
+    )
+
+    for i in range(WAVEFORM_POINTS):
+        segment = audio[
+            WAVEFORM_EDGES[i]:
+            WAVEFORM_EDGES[i + 1]
+        ]
+
+        if segment.size == 0:
+            break
+
+        envelope[i] = np.max(
+            np.abs(segment)
+        )
+
+    # Normalise, without blowing quiet room noise up to full height
+    return envelope / max(
+        float(envelope.max()),
+        0.05
+    )
+
+
+def spectrogram_columns(audio):
+    # One column per time step (left to right), each column
+    # SPECTROGRAM_ROWS values from low to high frequency in 0..1.
+    columns = np.zeros(
+        (SPECTROGRAM_COLUMNS, SPECTROGRAM_ROWS),
+        dtype=np.float32
+    )
+
+    frames = min(
+        (audio.size - SPECTROGRAM_N_FFT)
+        // SPECTROGRAM_HOP
+        + 1,
+        SPECTROGRAM_COLUMNS
+    )
+
+    if frames <= 0:
+        return columns
+
+    starts = (
+        np.arange(frames)
+        * SPECTROGRAM_HOP
+    )
+
+    windows = (
+        audio[
+            starts[:, None]
+            + np.arange(SPECTROGRAM_N_FFT)
+        ]
+        * SPECTROGRAM_WINDOW
+    )
+
+    power = np.abs(
+        np.fft.rfft(windows, axis=1)[
+            :,
+            :SPECTROGRAM_BINS
+        ]
+    ) ** 2
+
+    rows = np.add.reduceat(
+        power,
+        SPECTROGRAM_ROW_EDGES[:-1],
+        axis=1
+    )
+
+    db = 10 * np.log10(rows + 1e-12)
+    db -= db.max()
+
+    columns[:frames] = np.clip(
+        (db + 80) / 80.0,
+        0.0,
+        1.0
+    )
+
+    return columns
+
+
 def update_visualization(
-    audio_chunk,
-    elapsed
+    audio_chunk
 ):
     global live_audio_buffer
     global visualization_data
-
-    if audio_chunk is None:
-        return
 
     chunk = np.asarray(
         audio_chunk,
@@ -240,168 +399,39 @@ def update_visualization(
     if chunk.ndim > 1:
         chunk = chunk[:, 0]
 
-    chunk = chunk.flatten()
-
-    if len(chunk) == 0:
-        return
-
     with audio_lock:
         live_audio_buffer = np.concatenate(
             (
                 live_audio_buffer,
-                chunk
+                chunk.ravel()
             )
-        )
+        )[:RECORDING_SAMPLES]
 
-        if (
-            len(live_audio_buffer)
-            > LIVE_BUFFER_SAMPLES
-        ):
-            live_audio_buffer = (
-                live_audio_buffer[
-                    -LIVE_BUFFER_SAMPLES:
-                ]
-            )
-
-        current_audio = (
-            live_audio_buffer.copy()
-        )
-
-    if len(current_audio) < 1024:
-        return
+        audio = live_audio_buffer
 
     try:
-        audio_16k = librosa.resample(
-            current_audio,
-            orig_sr=DEVICE_SAMPLE_RATE,
-            target_sr=SAMPLE_RATE
-        )
+        waveform = waveform_envelope(audio)
+        spectrogram = spectrogram_columns(audio)
     except Exception as e:
         print(
-            "Visualization resampling "
-            f"error: {e}"
+            "Visualization error: "
+            f"{e}"
         )
         return
 
-    waveform_points = 180
-
-    if len(audio_16k) > waveform_points:
-        waveform_indices = np.linspace(
-            0,
-            len(audio_16k) - 1,
-            waveform_points
-        ).astype(int)
-
-        waveform = (
-            audio_16k[
-                waveform_indices
-            ]
-        )
-    else:
-        waveform = audio_16k
-
-    waveform_max = np.max(
-        np.abs(waveform)
+    elapsed = (
+        audio.size
+        / DEVICE_SAMPLE_RATE
     )
-
-    if waveform_max > 0:
-        waveform = (
-            waveform / waveform_max
-        )
-
-    waveform = np.clip(
-        waveform,
-        -1.0,
-        1.0
-    )
-
-    n_fft = 512
-    hop_length = 128
-
-    if len(audio_16k) >= n_fft:
-        try:
-            stft = librosa.stft(
-                audio_16k,
-                n_fft=n_fft,
-                hop_length=hop_length,
-                win_length=n_fft,
-                center=False
-            )
-
-            magnitude = np.abs(
-                stft
-            )
-
-            db = librosa.amplitude_to_db(
-                magnitude,
-                ref=np.max
-            )
-
-            db = np.clip(
-                db,
-                -80,
-                0
-            )
-
-            normalized = (
-                db + 80
-            ) / 80.0
-
-            normalized = np.flipud(
-                normalized
-            )
-
-            target_rows = 64
-            target_cols = 160
-
-            rows = normalized.shape[0]
-            cols = normalized.shape[1]
-
-            row_indices = np.linspace(
-                0,
-                rows - 1,
-                target_rows
-            ).astype(int)
-
-            number_of_columns = min(
-                target_cols,
-                cols
-            )
-
-            col_indices = np.linspace(
-                0,
-                cols - 1,
-                number_of_columns
-            ).astype(int)
-
-            spectrogram = normalized[
-                np.ix_(
-                    row_indices,
-                    col_indices
-                )
-            ]
-
-            spectrogram = (
-                spectrogram.tolist()
-            )
-
-        except Exception as e:
-            print(
-                "Spectrogram calculation "
-                f"error: {e}"
-            )
-            spectrogram = []
-    else:
-        spectrogram = []
 
     with audio_lock:
         visualization_data = {
             "active":
                 elapsed < DURATION,
             "waveform":
-                waveform.tolist(),
+                waveform.round(3).tolist(),
             "spectrogram":
-                spectrogram,
+                spectrogram.round(3).tolist(),
             "sample_rate":
                 SAMPLE_RATE,
             "min_frequency":
@@ -409,10 +439,7 @@ def update_visualization(
             "max_frequency":
                 SAMPLE_RATE // 2,
             "elapsed":
-                round(
-                    elapsed,
-                    2
-                ),
+                round(elapsed, 2),
             "duration":
                 DURATION
         }
@@ -504,10 +531,15 @@ def run_real_ai_model(
             )
         )
 
+        # Only classify what the audience hears: the speakers
+        # play the first DURATION seconds of the file. (The demo
+        # sounds are up to 2 minutes long; classifying all of it
+        # took up to ~30 s on the Pi and judged audio that was
+        # never played.)
         audio = np.asarray(
             audio,
             dtype=np.float32
-        )
+        )[:int(SAMPLE_RATE * DURATION)]
 
         segment_samples = int(
             SAMPLE_RATE
@@ -521,9 +553,8 @@ def run_real_ai_model(
 
         content_samples = audio.size
 
-        # The model reads 2 s windows. The demo plays 5 s
-        # recordings; anything shorter is right-padded with
-        # silence as a fallback (training mixes short events
+        # The model reads 2 s windows. Anything shorter than
+        # that is right-padded with silence as a fallback (training mixes short events
         # onto stable background instead).
         if audio.size < segment_samples:
             audio = np.pad(
@@ -675,29 +706,110 @@ def run_real_ai_model(
 # PREDICTION CACHE
 # ============================================================
 
-# The demo classifies the original sound file, so the result
-# for a given file never changes. Compute it once and reuse it.
-# A single worker keeps inferences from competing for the
-# Raspberry Pi's CPU cores.
+# The demo classifies the first DURATION seconds of the
+# original sound file (what is played), so the result for a
+# file never changes. It is computed once, kept in
+# memory and on disk, and a Play only waits for the model when a
+# file is new or has changed.
 
-inference_pool = ThreadPoolExecutor(
+PREDICTION_CACHE_FILE = (
+    repo_root
+    / "prediction_cache.json"
+)
+
+# Held for a whole Play (or Replay); only one runs at a time.
+run_lock = threading.Lock()
+
+# One inference at a time; parallel runs only slow each other
+# down on the Pi's CPU.
+inference_lock = threading.Lock()
+
+prediction_pool = ThreadPoolExecutor(
     max_workers=1
 )
 
-prediction_cache = {}
+
+def load_prediction_cache():
+    try:
+        with open(
+            PREDICTION_CACHE_FILE,
+            encoding="utf-8"
+        ) as f:
+            return {
+                key: tuple(value)
+                for key, value
+                in json.load(f).items()
+            }
+    except (OSError, ValueError):
+        return {}
+
+
+prediction_cache = load_prediction_cache()
+
+
+def save_prediction_cache():
+    tmp_file = PREDICTION_CACHE_FILE.with_suffix(
+        ".tmp"
+    )
+
+    with open(
+        tmp_file,
+        "w",
+        encoding="utf-8"
+    ) as f:
+        json.dump(
+            prediction_cache,
+            f,
+            indent=1
+        )
+
+    os.replace(
+        tmp_file,
+        PREDICTION_CACHE_FILE
+    )
+
+
+def prediction_cache_key(
+    sound_path
+):
+    stat = os.stat(sound_path)
+
+    # A changed file, model or threshold gives a new key.
+    return "|".join([
+        Path(sound_path).name,
+        str(stat.st_size),
+        str(stat.st_mtime_ns),
+        embedder_path.name,
+        classifier_path.name,
+        str(classifier_threshold),
+        str(DURATION)
+    ])
 
 
 def predict_sound_file(
     sound_path
 ):
-    key = (
-        str(sound_path),
-        os.path.getmtime(sound_path)
+    key = prediction_cache_key(
+        sound_path
     )
 
-    if key not in prediction_cache:
+    if key in prediction_cache:
+        return prediction_cache[key]
+
+    with inference_lock:
+        if key in prediction_cache:
+            return prediction_cache[key]
+
+        started = time.monotonic()
+
         result = run_real_ai_model(
             sound_path
+        )
+
+        print(
+            f"Inference on {sound_path} took "
+            f"{time.monotonic() - started:.1f} s: "
+            f"{result[0]}"
         )
 
         if not result[0].startswith(
@@ -705,107 +817,97 @@ def predict_sound_file(
         ):
             prediction_cache[key] = result
 
-        return result
+            try:
+                save_prediction_cache()
+            except OSError as e:
+                print(
+                    "Could not save prediction "
+                    f"cache: {e}"
+                )
 
-    return prediction_cache[key]
+        return result
 
 
 def warm_up_predictions():
-    for sound_file in sorted(
-        Path("sounds").glob("*.wav")
-    ):
-        if sound_file.stem in ALLOWED_CLASSES:
-            inference_pool.submit(
-                predict_sound_file,
+    # Fill the cache in the background. It pauses while a Play
+    # or Replay is running, so it never delays one by more than
+    # the file it is currently working on.
+    def warm_up():
+        started = time.monotonic()
+
+        for sound_file in sorted(
+            Path("sounds").glob("*.wav")
+        ):
+            if sound_file.stem not in ALLOWED_CLASSES:
+                continue
+
+            while run_lock.locked():
+                time.sleep(0.2)
+
+            predict_sound_file(
                 str(sound_file)
             )
 
-
-# ============================================================
-# PLAY AND RECORD
-# ============================================================
-
-def play_and_record():
-    global latest_status
-
-    reset_visualization()
-
-    sounds_dir = Path("sounds")
-    sound_files = [
-        f.stem
-        for f in sounds_dir.glob("*.wav")
-        if f.stem in ALLOWED_CLASSES
-    ]
-
-    if not sound_files:
-        sound_files = ALLOWED_CLASSES
-
-    chosen_sound = random.choice(
-        sound_files
-    )
-
-    sound_path = (
-        f"sounds/{chosen_sound}.wav"
-    )
-
-    if not os.path.exists(
-        sound_path
-    ):
         print(
-            f"Error: {sound_path} "
-            "not found!"
+            "Prediction warm-up finished in "
+            f"{time.monotonic() - started:.1f} s"
         )
-        return
 
-    print(
-        "\n--- UI Triggered: "
-        f"Random Sound "
-        f"({chosen_sound.upper()}) ---"
-    )
+    threading.Thread(
+        target=warm_up,
+        daemon=True
+    ).start()
 
-    # Start inference right away; it runs while the sound is
-    # played and recorded instead of after the guessing pause.
-    prediction = inference_pool.submit(
-        predict_sound_file,
-        sound_path
-    )
 
-    timestamp = (
-        datetime.now()
-        .strftime(
-            "%Y-%m-%d_%H-%M-%S"
-        )
-    )
+# ============================================================
+# STATUS
+# ============================================================
 
-    rec_filename = (
-        f"recordings/"
-        f"{timestamp}_"
-        f"{chosen_sound}.wav"
-    )
+def set_status(
+    action,
+    prediction,
+    timestamp="-",
+    filename="-",
+    confidence="0%",
+    probabilities=None
+):
+    global latest_status
 
     latest_status = {
         "action":
-            "PLAYING & RECORDING",
+            action,
         "timestamp":
             timestamp,
         "filename":
-            f"{timestamp}_"
-            f"{chosen_sound}.wav",
+            filename,
         "prediction":
-            "RECORDING AUDIO...",
+            prediction,
         "confidence":
-            "0%",
+            confidence,
         "probabilities":
-            {
+            probabilities
+            or {
                 cls: 0
                 for cls
                 in ALLOWED_CLASSES
             }
     }
 
-    players = []
 
+# ============================================================
+# SPEAKERS
+# ============================================================
+
+# Sound played by the last Play, for the Replay button
+last_sound_path = None
+
+
+def start_players(
+    sound_path
+):
     print("Playing sound via Jabra + VMK25")
+
+    players = []
 
     # Jabra SPEAK 510 via ALSA
     jabra_card = get_alsa_card_by_keyword("Jabra")
@@ -832,6 +934,98 @@ def play_and_record():
                 sound_path
             ]
         )
+    )
+
+    return players
+
+
+def stop_players(
+    players,
+    grace
+):
+    # Let the sound finish naturally, but never longer than grace
+    deadline = time.monotonic() + grace
+
+    for player in players:
+        try:
+            player.wait(
+                timeout=max(
+                    0,
+                    deadline - time.monotonic()
+                )
+            )
+        except subprocess.TimeoutExpired:
+            player.terminate()
+        except Exception:
+            pass
+
+
+# ============================================================
+# PLAY AND RECORD
+# ============================================================
+
+def play_and_record():
+    global last_sound_path
+
+    reset_visualization()
+
+    sound_files = [
+        f.stem
+        for f in Path("sounds").glob("*.wav")
+        if f.stem in ALLOWED_CLASSES
+    ]
+
+    if not sound_files:
+        raise RuntimeError(
+            "No sound files found. Expected "
+            "sounds/<class>.wav for one of: "
+            + ", ".join(ALLOWED_CLASSES)
+        )
+
+    chosen_sound = random.choice(
+        sound_files
+    )
+
+    sound_path = (
+        f"sounds/{chosen_sound}.wav"
+    )
+
+    last_sound_path = sound_path
+
+    print(
+        "\n--- UI Triggered: "
+        f"Random Sound "
+        f"({chosen_sound.upper()}) ---"
+    )
+
+    # Classify the original file in the background while it is
+    # played (instant when it is already in the cache).
+    prediction = prediction_pool.submit(
+        predict_sound_file,
+        sound_path
+    )
+
+    timestamp = (
+        datetime.now()
+        .strftime(
+            "%Y-%m-%d_%H-%M-%S"
+        )
+    )
+
+    filename = (
+        f"{timestamp}_"
+        f"{chosen_sound}.wav"
+    )
+
+    rec_filename = (
+        f"recordings/{filename}"
+    )
+
+    set_status(
+        "PLAYING & RECORDING",
+        "RECORDING AUDIO...",
+        timestamp,
+        filename
     )
 
     mic_idx = (
@@ -868,76 +1062,53 @@ def play_and_record():
             )
 
         chunk = indata.copy()
+
         recorded_chunks.append(
             chunk
         )
 
-        elapsed = (
-            time.monotonic()
-            -
-            recording_callback.start_time
+        visualization_queue.put(
+            chunk
         )
 
-        if elapsed <= DURATION:
-            visualization_queue.put(
-    (
-        chunk,
-        elapsed
-    )
-)
-
-    recording_callback.start_time = (
-        time.monotonic()
-    )
     def visualization_worker():
         # The browser polls /audio-data every 100 ms, so redraw at
-        # most that often. Chunks that arrive in between are merged
-        # into one update instead of each triggering a full
-        # resample + STFT of the 5 s buffer (too slow on a Pi).
+        # most that often; chunks arriving in between are merged
+        # into one update.
         finished = False
 
         while not finished:
-            try:
-                chunk, elapsed = visualization_queue.get()
+            chunk = visualization_queue.get()
 
-                if chunk is None:
+            if chunk is None:
+                break
+
+            chunks = [chunk]
+
+            while True:
+                try:
+                    next_chunk = (
+                        visualization_queue.get_nowait()
+                    )
+                except queue.Empty:
                     break
 
-                chunks = [chunk]
+                if next_chunk is None:
+                    finished = True
+                    break
 
-                while True:
-                    try:
-                        (
-                            next_chunk,
-                            next_elapsed
-                        ) = visualization_queue.get_nowait()
-                    except queue.Empty:
-                        break
+                chunks.append(next_chunk)
 
-                    if next_chunk is None:
-                        finished = True
-                        break
-
-                    chunks.append(next_chunk)
-                    elapsed = next_elapsed
-
-                update_visualization(
-                    np.concatenate(
-                        chunks,
-                        axis=0
-                    ),
-                    elapsed
+            update_visualization(
+                np.concatenate(
+                    chunks,
+                    axis=0
                 )
+            )
 
-                time.sleep(
-                    VISUALIZATION_INTERVAL
-                )
-
-            except Exception as e:
-                print(
-                    "Visualization worker "
-                    f"error: {e}"
-                )
+            time.sleep(
+                VISUALIZATION_INTERVAL
+            )
 
     visualization_thread = threading.Thread(
         target=visualization_worker,
@@ -946,7 +1117,6 @@ def play_and_record():
 
     visualization_thread.start()
 
-
     print(
         "Starting REAL RØDE "
         f"microphone recording at "
@@ -954,8 +1124,9 @@ def play_and_record():
         f"for {DURATION} seconds..."
     )
 
+    players = []
+
     try:
-        # Standard blocksize (eller fjernet for automatisk standard)
         with sd.InputStream(
             samplerate=
                 DEVICE_SAMPLE_RATE,
@@ -965,6 +1136,13 @@ def play_and_record():
             callback=
                 recording_callback
         ):
+            # Start the speakers only once the mic is live, so
+            # the recording and the live display line up with
+            # the sound.
+            players = start_players(
+                sound_path
+            )
+
             time.sleep(
                 DURATION
             )
@@ -976,28 +1154,35 @@ def play_and_record():
         )
 
     finally:
-        with audio_lock:
-            visualization_data[
-                "active"
-            ] = False
-            visualization_data[
-                "elapsed"
-            ] = DURATION
+        visualization_queue.put(
+            None
+        )
 
-    visualization_queue.put(
-        (None, None)
-    )
+    if not players:
+        # No microphone: still play the sound for the audience
+        players = start_players(
+            sound_path
+        )
+
+    # Players can lag the mic slightly; let the end of the sound
+    # play out in the background instead of cutting it off.
+    threading.Thread(
+        target=stop_players,
+        args=(
+            players,
+            DURATION if not recorded_chunks else 1.0
+        ),
+        daemon=True
+    ).start()
 
     visualization_thread.join(
         timeout=1
     )
 
-
-    for player in players:
-        try:
-            player.terminate()
-        except Exception:
-            pass
+    with audio_lock:
+        visualization_data[
+            "active"
+        ] = False
 
     if recorded_chunks:
         recording = np.concatenate(
@@ -1011,26 +1196,13 @@ def play_and_record():
         )
 
         recording = np.zeros(
-            int(
-                DURATION
-                * DEVICE_SAMPLE_RATE
-            ),
+            RECORDING_SAMPLES,
             dtype=np.float32
         )
 
-    expected_samples = int(
-        DURATION
-        * DEVICE_SAMPLE_RATE
-    )
-
     recording = recording[
-        :expected_samples
+        :RECORDING_SAMPLES
     ]
-
-    print(
-        "Resampling RØDE recording "
-        "from 48 kHz to 16 kHz..."
-    )
 
     resampled_recording = (
         librosa.resample(
@@ -1042,16 +1214,12 @@ def play_and_record():
         )
     )
 
-    resampled_recording = (
+    sf.write(
+        rec_filename,
         resampled_recording.reshape(
             -1,
             1
-        )
-    )
-
-    sf.write(
-        rec_filename,
-        resampled_recording,
+        ),
         SAMPLE_RATE
     )
 
@@ -1066,6 +1234,14 @@ def play_and_record():
     # Started in the background when playback began. The
     # frontend keeps the result hidden until it is revealed.
     # ========================================================
+    if not prediction.done():
+        set_status(
+            "ANALYSING",
+            "AI IS ANALYSING...",
+            timestamp,
+            filename
+        )
+
     ai_result, ai_probs = (
         prediction.result()
     )
@@ -1113,21 +1289,14 @@ def play_and_record():
                 1
             )
 
-    latest_status = {
-        "action":
-            "COMPLETED",
-        "timestamp":
-            timestamp,
-        "filename":
-            f"{timestamp}_"
-            f"{chosen_sound}.wav",
-        "prediction":
-            clean_pred,
-        "confidence":
-            conf_val,
-        "probabilities":
-            final_probs
-    }
+    set_status(
+        "COMPLETED",
+        clean_pred,
+        timestamp,
+        filename,
+        conf_val,
+        final_probs
+    )
 
     print(
         "Real AI Prediction: "
@@ -1232,14 +1401,11 @@ def audio_data():
     )
 
 
-run_lock = threading.Lock()
-
-
 @app.route("/trigger/play")
 def trigger_play():
     # Lagt til feilsøking for å se hvem som kaller ruten
     print(f">>> TRIGGERED! IP: {request.remote_addr} | Agent: {request.user_agent}")
-    
+
     # Only one run at a time; a second trigger would start a
     # second recording and inference competing for the CPU.
     if not run_lock.acquire(
@@ -1249,12 +1415,25 @@ def trigger_play():
             "success":
                 False,
             "error":
-                "A test is already running"
+                "A test or replay is already running"
         }), 409
+
+    # Fresh status right away, so the browser never mistakes
+    # the previous run's result or error for this one.
+    set_status(
+        "STARTING",
+        "PREPARING..."
+    )
 
     def run():
         try:
             play_and_record()
+        except Exception as e:
+            traceback.print_exc()
+            set_status(
+                "ERROR",
+                f"ERROR: {e}"
+            )
         finally:
             run_lock.release()
 
@@ -1263,6 +1442,48 @@ def trigger_play():
         daemon=True
     )
     worker.start()
+
+    return jsonify({
+        "success":
+            True
+    })
+
+
+@app.route("/trigger/replay")
+def trigger_replay():
+    # Play the last sound again through the speakers (no
+    # recording, no new prediction). Returns once it has finished.
+    if last_sound_path is None:
+        return jsonify({
+            "success":
+                False,
+            "error":
+                "No sound has been played yet"
+        }), 404
+
+    if not run_lock.acquire(
+        blocking=False
+    ):
+        return jsonify({
+            "success":
+                False,
+            "error":
+                "A test or replay is already running"
+        }), 409
+
+    try:
+        print(
+            f"Replaying {last_sound_path}"
+        )
+
+        stop_players(
+            start_players(
+                last_sound_path
+            ),
+            grace=DURATION + 5
+        )
+    finally:
+        run_lock.release()
 
     return jsonify({
         "success":

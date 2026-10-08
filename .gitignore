@@ -1,2 +1,4 @@
 /sounds
 /recordings
+/prediction_cache.json
+/prediction_cache.tmp

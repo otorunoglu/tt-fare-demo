@@ -14,7 +14,9 @@ let spectrogramRendered = false;
     let realWaveformData = [];
     let realSpectrogramData = [];
     let audioDataPolling = null;
-    let progress = 0;
+    // Seconds of audio the backend has actually recorded, drives the playhead
+    let liveElapsed = 0;
+    let liveDuration = 5;
 
     /* =========================================================
        CANVAS SIZING HELPER (Supervisor's standard)
@@ -43,6 +45,9 @@ let spectrogramRendered = false;
             const response = await fetch("/audio-data", { cache: "no-store" });
             if (!response.ok) return;
             const data = await response.json();
+
+            liveElapsed = Number(data.elapsed) || 0;
+            liveDuration = Number(data.duration) || 5;
 
             if (Array.isArray(data.waveform) && data.waveform.length > 0) {
                 realWaveformData = data.waveform;
@@ -96,9 +101,6 @@ let spectrogramRendered = false;
         waveformCtx.stroke();
 
         const isActive = typeof visualizerActive !== 'undefined' ? visualizerActive : false;
-        if (!isActive) {
-            recordingStartTime = null;
-        }
 
         if (typeof realWaveformData === 'undefined' || !realWaveformData || realWaveformData.length === 0) {
             waveformCtx.font = "600 11px Inter, sans-serif";
@@ -109,14 +111,16 @@ let spectrogramRendered = false;
 
         const data = realWaveformData;
         const totalColumns = Math.floor(w / 4); // Creates a dense, solid column layout
-        const step = Math.max(1, Math.floor(data.length / totalColumns));
         const centerY = h / 2;
 
         waveformCtx.fillStyle = '#1a7548';
 
         for (let x = 0; x < totalColumns; x++) {
             let maxVal = 0;
-            for (let i = x * step; i < Math.min(data.length, (x + 1) * step); i++) {
+            // The points span the whole recording time; map each column onto them
+            const first = Math.floor(x * data.length / totalColumns);
+            const last = Math.max(first + 1, Math.floor((x + 1) * data.length / totalColumns));
+            for (let i = first; i < Math.min(data.length, last); i++) {
                 const val = Math.abs(Number(data[i]) || 0);
                 if (val > maxVal) maxVal = val;
             }
@@ -129,26 +133,9 @@ let spectrogramRendered = false;
             waveformCtx.fillRect(px, centerY - heightFactor, barWidth, heightFactor * 2);
         }
 
-        // Progress line animation
-        let currentProgress = 0;
-        if (isActive) {
-            if (typeof recordingStartTime === 'undefined' || !recordingStartTime) {
-                recordingStartTime = Date.now();
-            }
-            const elapsedSeconds = (Date.now() - recordingStartTime) / 1000;
-            const totalDuration = 5.0; // 5-second duration match
-            currentProgress = Math.min(1, elapsedSeconds / totalDuration);
-
-if (currentProgress >= 1) {
-    currentProgress = 1;
-    visualizerActive = false;
-    recordingStartTime = null;
-}
-
-        } else {
-            recordingStartTime = null;
-            currentProgress = 0;
-        }
+        // Playhead = how much audio the microphone has recorded so far,
+        // so it moves in step with the sound from the speakers
+        const currentProgress = liveDuration > 0 ? Math.min(1, liveElapsed / liveDuration) : 0;
 
         const curPx = currentProgress * w;
         waveformCtx.fillStyle = '#22794b22';
@@ -386,10 +373,38 @@ if (currentProgress >= 1) {
        PLAY BUTTON
     ========================================================= */
     const playBtn = document.getElementById("playBtn");
+    const replayBtn = document.getElementById("replayBtn");
+    const listenAgainBtn = document.getElementById("listenAgainBtn");
+    const PLAY_LABEL = '<i class="fa-solid fa-play me-2"></i> Play Sound &amp; Test';
+    const REPLAY_LABEL = '<i class="fa-solid fa-rotate-right me-2"></i> Replay Sound';
+    let testRunning = false;
+    let replayRunning = false;
+    let soundPlayed = false;
+
+    function updateButtons() {
+        if (playBtn) {
+            playBtn.disabled = testRunning || replayRunning;
+            if (!testRunning) playBtn.innerHTML = PLAY_LABEL;
+        }
+        if (replayBtn) {
+            replayBtn.disabled = testRunning || replayRunning || !soundPlayed;
+            replayBtn.innerHTML = replayRunning
+                ? '<i class="fa-solid fa-volume-high me-2"></i> Playing...'
+                : REPLAY_LABEL;
+        }
+        if (listenAgainBtn) listenAgainBtn.disabled = testRunning || replayRunning;
+    }
+
+    function finishTest() {
+        testRunning = false;
+        updateButtons();
+    }
+
     if (playBtn) {
         playBtn.addEventListener("click", () => {
             realWaveformData = [];
             realSpectrogramData = [];
+            liveElapsed = 0;
             paintWave();
             paintSpectrogram();
             setVisualizerState(true);
@@ -398,22 +413,47 @@ if (currentProgress >= 1) {
             // Space is the reveal key; don't let it re-trigger this button
             playBtn.blur();
 
-
-            playBtn.disabled = true;
+            testRunning = true;
+            updateButtons();
             playBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-2"></i> Recording &amp; Analysing...';
 
             fetch("/trigger/play")
-                .then(response => response.json())
-                .then(data => console.log("Horse sound test triggered:", data))
+                .then(response => response.json().then(data => {
+                    if (!response.ok) throw new Error(data.error || response.statusText);
+                    console.log("Horse sound test triggered:", data);
+                }))
                 .catch(error => {
                     console.error("Trigger error:", error);
                     resetPredictionResults();
                     setVisualizerState(false);
-                    playBtn.disabled = false;
-                    playBtn.innerHTML = '<i class="fa-solid fa-play me-2"></i> Play Sound &amp; Test';
+                    finishTest();
                 });
         });
     }
+
+    /* =========================================================
+       REPLAY: play the last sound again through the speakers
+    ========================================================= */
+    function replaySound(event) {
+        if (event && event.currentTarget) event.currentTarget.blur();
+        if (replayRunning || testRunning) return;
+        replayRunning = true;
+        updateButtons();
+
+        // Returns once the sound has finished playing
+        fetch("/trigger/replay")
+            .then(response => response.json().then(data => {
+                if (!response.ok) throw new Error(data.error || response.statusText);
+            }))
+            .catch(error => console.error("Replay error:", error))
+            .finally(() => {
+                replayRunning = false;
+                updateButtons();
+            });
+    }
+
+    if (replayBtn) replayBtn.addEventListener("click", replaySound);
+    if (listenAgainBtn) listenAgainBtn.addEventListener("click", replaySound);
 
     /* =========================================================
        STATUS POLLING
@@ -437,23 +477,21 @@ setInterval(() => {
                 lastActionStatus = data.action;
 
                 if (data.action === "PLAYING & RECORDING") {
+                    soundPlayed = true;
                     setVisualizerState(true);
                 } else if (data.action === "COMPLETED") {
-                    console.log("=== COMPLETED: STOPPING AUDIO POLLING ===");
-                    console.log("audioDataPolling before stop:", audioDataPolling);
                     stopAudioDataPolling();
-                    console.log("audioDataPolling after stop:", audioDataPolling);
                     concealResult();
-                    if (playBtn) {
-                        playBtn.disabled = false;
-                        playBtn.innerHTML = '<i class="fa-solid fa-play me-2"></i> Play Sound &amp; Test';
-                    }
+                    soundPlayed = true;
+                    finishTest();
+                } else if (data.action === "ERROR") {
+                    // Show the error instead of waiting forever
+                    stopAudioDataPolling();
+                    resetPredictionResults();
+                    finishTest();
                 } else if (data.action === "System Ready") {
                     resetPredictionResults();
-                    if (playBtn) {
-                        playBtn.disabled = false;
-                        playBtn.innerHTML = '<i class="fa-solid fa-play me-2"></i> Play Sound &amp; Test';
-                    }
+                    finishTest();
                 }
 
                 if (data.probabilities) {
