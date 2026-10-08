@@ -7,6 +7,7 @@ from datetime import datetime
 import subprocess
 from pathlib import Path
 import queue
+from concurrent.futures import ThreadPoolExecutor
 
 
 from flask import Flask, render_template, jsonify, send_file, request
@@ -30,6 +31,9 @@ DEVICE_SAMPLE_RATE = 48000
 
 # Recording duration
 DURATION = 5
+
+# How often the live waveform/spectrogram is recomputed
+VISUALIZATION_INTERVAL = 0.1
 
 
 # ============================================================
@@ -515,30 +519,62 @@ def run_real_ai_model(
             * (1.0 - segment_overlap)
         )
 
+        content_samples = audio.size
+
+        # The model reads 2 s windows. The demo plays 5 s
+        # recordings; anything shorter is right-padded with
+        # silence as a fallback (training mixes short events
+        # onto stable background instead).
         if audio.size < segment_samples:
-            return (
-                "Audio too short for inference",
-                {}
+            audio = np.pad(
+                audio,
+                (0, segment_samples - audio.size)
+            )
+
+        starts = list(
+            range(
+                0,
+                audio.size
+                - segment_samples
+                + 1,
+                hop_samples
+            )
+        )
+
+        # Like _window_segment in training: add a final window
+        # aligned to the end if at least half a window is left
+        # (and the last window doesn't already end there).
+        if (
+            starts[-1] + segment_samples
+            < audio.size
+            and
+            audio.size
+            - (starts[-1] + hop_samples)
+            >= segment_samples // 2
+        ):
+            starts.append(
+                audio.size
+                - segment_samples
             )
 
         best_label = "unknown"
         highest_conf = 0.0
         best_probs = {}
 
-        for start in range(
-            0,
-            audio.size
-            - segment_samples
-            + 1,
-            hop_samples
-        ):
+        for start in starts:
             segment = audio[
                 start:
                 start + segment_samples
             ]
 
+            # Gate on the real audio only, not the zero padding.
             dbfs = mb.loudness_dbfs(
-                segment
+                segment[
+                    :max(
+                        1,
+                        content_samples - start
+                    )
+                ]
             )
 
             if dbfs < silence_threshold:
@@ -636,6 +672,56 @@ def run_real_ai_model(
 
 
 # ============================================================
+# PREDICTION CACHE
+# ============================================================
+
+# The demo classifies the original sound file, so the result
+# for a given file never changes. Compute it once and reuse it.
+# A single worker keeps inferences from competing for the
+# Raspberry Pi's CPU cores.
+
+inference_pool = ThreadPoolExecutor(
+    max_workers=1
+)
+
+prediction_cache = {}
+
+
+def predict_sound_file(
+    sound_path
+):
+    key = (
+        str(sound_path),
+        os.path.getmtime(sound_path)
+    )
+
+    if key not in prediction_cache:
+        result = run_real_ai_model(
+            sound_path
+        )
+
+        if not result[0].startswith(
+            "Error"
+        ):
+            prediction_cache[key] = result
+
+        return result
+
+    return prediction_cache[key]
+
+
+def warm_up_predictions():
+    for sound_file in sorted(
+        Path("sounds").glob("*.wav")
+    ):
+        if sound_file.stem in ALLOWED_CLASSES:
+            inference_pool.submit(
+                predict_sound_file,
+                str(sound_file)
+            )
+
+
+# ============================================================
 # PLAY AND RECORD
 # ============================================================
 
@@ -675,6 +761,13 @@ def play_and_record():
         "\n--- UI Triggered: "
         f"Random Sound "
         f"({chosen_sound.upper()}) ---"
+    )
+
+    # Start inference right away; it runs while the sound is
+    # played and recorded instead of after the guessing pause.
+    prediction = inference_pool.submit(
+        predict_sound_file,
+        sound_path
     )
 
     timestamp = (
@@ -797,16 +890,47 @@ def play_and_record():
         time.monotonic()
     )
     def visualization_worker():
-        while True:
+        # The browser polls /audio-data every 100 ms, so redraw at
+        # most that often. Chunks that arrive in between are merged
+        # into one update instead of each triggering a full
+        # resample + STFT of the 5 s buffer (too slow on a Pi).
+        finished = False
+
+        while not finished:
             try:
                 chunk, elapsed = visualization_queue.get()
 
                 if chunk is None:
                     break
 
+                chunks = [chunk]
+
+                while True:
+                    try:
+                        (
+                            next_chunk,
+                            next_elapsed
+                        ) = visualization_queue.get_nowait()
+                    except queue.Empty:
+                        break
+
+                    if next_chunk is None:
+                        finished = True
+                        break
+
+                    chunks.append(next_chunk)
+                    elapsed = next_elapsed
+
                 update_visualization(
-                    chunk,
+                    np.concatenate(
+                        chunks,
+                        axis=0
+                    ),
                     elapsed
+                )
+
+                time.sleep(
+                    VISUALIZATION_INTERVAL
                 )
 
             except Exception as e:
@@ -937,35 +1061,13 @@ def play_and_record():
         f"\n{rec_filename}"
     )
 
-    latest_status = {
-        "action":
-            "GUESSING TIME",
-        "timestamp":
-            timestamp,
-        "filename":
-            f"{timestamp}_"
-            f"{chosen_sound}.wav",
-        "prediction":
-            "GUESS THE SOUND...",
-        "confidence":
-            "0%",
-        "probabilities":
-            {
-                cls: 0
-                for cls
-                in ALLOWED_CLASSES
-            }
-    }
-
-    time.sleep(5)
-
     # ========================================================
     # REAL AI INFERENCE (DIRECTLY ON ORIGINAL SOUND FILE)
+    # Started in the background when playback began. The
+    # frontend keeps the result hidden until it is revealed.
     # ========================================================
     ai_result, ai_probs = (
-        run_real_ai_model(
-            sound_path
-        )
+        prediction.result()
     )
 
     if "(" in ai_result:
@@ -1130,13 +1232,34 @@ def audio_data():
     )
 
 
+run_lock = threading.Lock()
+
+
 @app.route("/trigger/play")
 def trigger_play():
     # Lagt til feilsøking for å se hvem som kaller ruten
     print(f">>> TRIGGERED! IP: {request.remote_addr} | Agent: {request.user_agent}")
     
+    # Only one run at a time; a second trigger would start a
+    # second recording and inference competing for the CPU.
+    if not run_lock.acquire(
+        blocking=False
+    ):
+        return jsonify({
+            "success":
+                False,
+            "error":
+                "A test is already running"
+        }), 409
+
+    def run():
+        try:
+            play_and_record()
+        finally:
+            run_lock.release()
+
     worker = threading.Thread(
-        target=play_and_record,
+        target=run,
         daemon=True
     )
     worker.start()
@@ -1152,6 +1275,8 @@ def trigger_play():
 # ============================================================
 
 if __name__ == "__main__":
+    warm_up_predictions()
+
     app.run(
         host="0.0.0.0",
         port=5000,

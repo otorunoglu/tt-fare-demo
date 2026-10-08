@@ -531,6 +531,71 @@
             from { opacity: 0; transform: translateY(8px); }
             to { opacity: 1; transform: translateY(0); }
         }
+        /* =========================================================
+           REVEAL OVERLAY (hides the AI answer until revealed)
+        ========================================================= */
+        .result-stack { position: relative; }
+        /* results are collapsed while hidden; leave room for the panel */
+        .result-stack.concealed { min-height: 430px; }
+        .reveal-overlay {
+            display: none;
+            position: absolute;
+            inset: 0 0 24px 0;   /* stop above the last card's margin */
+            z-index: 5;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            border-radius: 20px;
+            background: rgba(240, 247, 242, 0.55);
+        }
+        .result-stack.concealed .reveal-overlay { display: flex; }
+        .result-stack.concealed .card {
+            filter: blur(10px);
+            pointer-events: none;
+            user-select: none;
+        }
+        /* never readable through the blur */
+        .result-stack.concealed #predictionText,
+        .result-stack.concealed .confidence-badge { visibility: hidden; }
+        .reveal-panel {
+            max-width: 420px;
+            width: 100%;
+            padding: 32px 28px;
+            text-align: center;
+            background: var(--white);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            box-shadow: var(--shadow-hover);
+            animation: resultReveal 0.35s ease-out;
+        }
+        .reveal-icon {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: var(--green-soft);
+            color: var(--green-dark);
+            font-size: 1.7rem;
+        }
+        .reveal-title { color: var(--navy); font-size: 1.5rem; font-weight: 800; }
+        .reveal-text { margin: 6px 0 20px; color: var(--text-light); }
+        .reveal-btn {
+            padding: 12px 26px;
+            font-size: 1.05rem;
+            font-weight: 700;
+            border-radius: 12px;
+        }
+        .reveal-hint { margin-top: 12px; color: var(--text-light); font-size: 0.8rem; }
+        .reveal-hint kbd {
+            padding: 2px 8px;
+            border-radius: 6px;
+            background: var(--green-soft);
+            color: var(--green-deep);
+            font-weight: 700;
+        }
         .probability-row { margin-bottom: 18px; }
         .probability-label {
             display: flex;

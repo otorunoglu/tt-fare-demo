@@ -287,17 +287,17 @@ if (currentProgress >= 1) {
 
     function showAnalysisAnimation() {
         predictionRunning = true;
-        analysisSeconds = 15;
+        analysisSeconds = 5;
         if (predictionLoading) predictionLoading.classList.add("active");
         if (probabilityResults) probabilityResults.classList.remove("visible");
         if (analysisMessage) analysisMessage.innerText = "Listening to the horse sound...";
-        if (analysisCount) analysisCount.innerText = "15 seconds remaining";
+        if (analysisCount) analysisCount.innerText = "5 seconds remaining";
         
         if (analysisTimer) clearInterval(analysisTimer);
         analysisTimer = setInterval(() => {
             analysisSeconds--;
             if (analysisSeconds > 0) {
-                if (analysisMessage) analysisMessage.innerText = analysisSeconds > 10 ? "Processing acoustic signal..." : "AI classification in progress...";
+                if (analysisMessage) analysisMessage.innerText = analysisSeconds > 2 ? "Processing acoustic signal..." : "AI classification in progress...";
                 if (analysisCount) analysisCount.innerText = analysisSeconds + (analysisSeconds === 1 ? " second remaining" : " seconds remaining");
             } else {
                 if (analysisMessage) analysisMessage.innerText = "Finalising AI prediction...";
@@ -324,10 +324,63 @@ if (currentProgress >= 1) {
         }
         if (predictionLoading) predictionLoading.classList.remove("active");
         if (probabilityResults) probabilityResults.classList.remove("visible");
-        analysisSeconds = 10;
+        analysisSeconds = 5;
         if (analysisMessage) analysisMessage.innerText = "Listening to the horse sound...";
-        if (analysisCount) analysisCount.innerText = "10 seconds remaining";
+        if (analysisCount) analysisCount.innerText = "5 seconds remaining";
+        setConcealed(false);
     }
+
+    /* =========================================================
+       REVEAL OVERLAY
+       The result is hidden behind an overlay until the audience
+       has guessed; the button or the Space key reveals it.
+    ========================================================= */
+    const resultStack = document.getElementById("resultStack");
+    const revealOverlay = document.getElementById("revealOverlay");
+    const revealBtn = document.getElementById("revealBtn");
+    let resultConcealed = false;
+    let swallowSpaceKeyup = false;
+
+    function setConcealed(concealed) {
+        resultConcealed = concealed;
+        if (resultStack) resultStack.classList.toggle("concealed", concealed);
+        if (revealOverlay) revealOverlay.setAttribute("aria-hidden", concealed ? "false" : "true");
+    }
+
+    function concealResult() {
+        predictionRunning = false;
+        if (analysisTimer) {
+            clearInterval(analysisTimer);
+            analysisTimer = null;
+        }
+        if (predictionLoading) predictionLoading.classList.remove("active");
+        if (probabilityResults) probabilityResults.classList.remove("visible");
+        setConcealed(true);
+        if (revealBtn) revealBtn.focus({ preventScroll: true });
+    }
+
+    function revealResult() {
+        if (!resultConcealed) return;
+        setConcealed(false);
+        showPredictionResults();
+    }
+
+    if (revealBtn) revealBtn.addEventListener("click", revealResult);
+
+    document.addEventListener("keydown", (event) => {
+        if (event.code !== "Space" || !resultConcealed) return;
+        // Keep Space from scrolling or clicking whatever has focus
+        event.preventDefault();
+        swallowSpaceKeyup = true;
+        if (!event.repeat) revealResult();
+    });
+
+    document.addEventListener("keyup", (event) => {
+        if (event.code === "Space" && swallowSpaceKeyup) {
+            event.preventDefault();
+            swallowSpaceKeyup = false;
+        }
+    });
 
     /* =========================================================
        PLAY BUTTON
@@ -340,9 +393,11 @@ if (currentProgress >= 1) {
             paintWave();
             paintSpectrogram();
             setVisualizerState(true);
+            setConcealed(false);
             showAnalysisAnimation();
+            // Space is the reveal key; don't let it re-trigger this button
+            playBtn.blur();
 
-            
 
             playBtn.disabled = true;
             playBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-2"></i> Recording &amp; Analysing...';
@@ -388,7 +443,7 @@ setInterval(() => {
                     console.log("audioDataPolling before stop:", audioDataPolling);
                     stopAudioDataPolling();
                     console.log("audioDataPolling after stop:", audioDataPolling);
-                    showPredictionResults();
+                    concealResult();
                     if (playBtn) {
                         playBtn.disabled = false;
                         playBtn.innerHTML = '<i class="fa-solid fa-play me-2"></i> Play Sound &amp; Test';
@@ -415,4 +470,4 @@ setInterval(() => {
                 }
             })
             .catch(error => console.log("Status connection error:", error));
-    }, 1000);
+    }, 250);

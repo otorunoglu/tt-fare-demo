@@ -124,6 +124,20 @@
 
         <!-- RIGHT COLUMN -->
         <div class="col-lg-7">
+          <div id="resultStack" class="result-stack">
+            <!-- REVEAL OVERLAY: hides the AI answer until the audience has guessed -->
+            <div id="revealOverlay" class="reveal-overlay" aria-hidden="true">
+                <div class="reveal-panel">
+                    <div class="reveal-icon"><i class="fa-solid fa-ear-listen"></i></div>
+                    <div class="reveal-title">What did you hear?</div>
+                    <p class="reveal-text">Make your guess, then see what the AI thinks.</p>
+                    <button id="revealBtn" class="btn btn-success reveal-btn" type="button">
+                        <i class="fa-solid fa-eye me-2"></i> Reveal AI answer
+                    </button>
+                    <div class="reveal-hint">or press <kbd>Space</kbd></div>
+                </div>
+            </div>
+
             <!-- AI PREDICTION -->
             <div class="card p-4">
                 <div class="ai-header">
@@ -159,7 +173,7 @@
                     </div>
                     <div class="analysis-scan"></div>
                     <div id="analysisMessage" class="analysis-message">Listening to the horse sound...</div>
-                    <div id="analysisCount" class="analysis-count">10 seconds remaining</div>
+                    <div id="analysisCount" class="analysis-count">5 seconds remaining</div>
                 </div>
 
                 <!-- FINAL PROBABILITY RESULTS -->
@@ -215,6 +229,7 @@
                     </div>
                 </div>
             </div>
+          </div>
         </div>
     </div>
 

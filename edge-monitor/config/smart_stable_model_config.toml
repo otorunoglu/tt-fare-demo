@@ -1,0 +1,690 @@
+version = 3                                                              # BUMP WHEN SCHEMA IS CHANGED!
+description = "Labels for horse sound classification (Migrated to TOML)"
+createdBy = "Johannes Geisler (Migrated by Tool)"
+createdAt = "2025-08-11"
+updatedAt = "2025-12-19"
+
+# Horse Soundscape Monitoring - MetaModel Configuration
+# -----------------------------------------------------
+# This file defines alert labels, cluster detection thresholds, and label grouping weights.
+# All numeric values are relative severities or confidence thresholds.
+
+[[labels]]
+name = "Horse Kick"
+value = "horse_kick"
+ls_group = "labels"
+label_group = "distress"
+show_in_ls = true
+use_for_classifier_training = true
+use_for_anomaly_training = true
+training_importance = 1.0
+description = "Single impact sound against walls, doors, or objects."
+is_alert = false
+is_cluster = true
+cluster_seconds_per_severity_level = 8.0
+cluster_warning_min_severity = 1.0
+cluster_confidence_floor = 0.95
+# Loudness gate, same machinery as `eating`. horse_kick fires in every hour of every day
+# (never zero across 96 measured hour-samples, 16-338 s/h), so a large quiet tail is dropping
+# into the restlessness index. A real kick is a loud impact, so keeping the top ~20% by loudness
+# is a well-matched filter that needs no classifier change. Only the restlessness index and the
+# inactivity alert consult these rules, and horse_kick is not in the inactivity label list.
+auto_thresholding = true
+threshold_mode = "auto"
+threshold_percentile = 0.80
+manual_threshold_db = -18.0
+safety_margin_db = 3.0
+min_samples_for_calibration = 200
+calibration_mode = "rolling"
+rolling_window = "14d"
+
+[[labels]]
+name = "Rattle Sound"
+value = "rattle"
+ls_group = "labels"
+label_group = "other"
+show_in_ls = true
+use_for_classifier_training = true
+use_for_anomaly_training = true
+training_importance = 1.0
+description = "Horses rattle against the cage or metal parts. Or other rattlesounds."
+is_alert = false
+is_cluster = true
+cluster_seconds_per_severity_level = 20.0
+cluster_warning_min_severity = 1.0
+cluster_confidence_floor = 0.985
+
+[[labels]]
+name = "Bird Tweet"
+value = "bird_tweet"
+ls_group = "labels_negative"
+label_group = "other"
+show_in_ls = false
+use_for_classifier_training = true
+use_for_anomaly_training = true
+training_importance = 1.0
+description = "Bird tweets"
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+merge_into = "other"
+
+[[labels]]
+name = "Bird Wing Flapping"
+value = "bird_wing_flap"
+ls_group = "labels_negative"
+label_group = "other"
+show_in_ls = false
+use_for_classifier_training = true
+use_for_anomaly_training = true
+training_importance = 1.0
+description = "Bird wing flapping sounds"
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+merge_into = "other"
+
+[[labels]]
+name = "Dog Barking"
+value = "dog_barking"
+ls_group = "labels_negative"
+label_group = "other"
+show_in_ls = false
+use_for_classifier_training = true
+use_for_anomaly_training = true
+training_importance = 1.0
+description = "Dog barking sounds. Ingested from a public dataset folder (see DOG_BARK_DIR)."
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+merge_into = "other"
+
+[[labels]]
+name = "Eating"
+value = "eating"
+ls_group = "labels"
+label_group = "eating"
+show_in_ls = true
+use_for_classifier_training = true
+use_for_anomaly_training = true
+training_importance = 1.0
+description = "The horse is eating."
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+auto_thresholding = true
+threshold_mode = "auto"                  # "auto" or "manual"
+threshold_percentile = 0.80
+manual_threshold_db = -18.0              # Only used if threshold_mode is "manual"
+safety_margin_db = 3.0
+min_samples_for_calibration = 200
+calibration_mode = "rolling"
+rolling_window = "14d"
+
+[[labels]]
+name = "Eating Trial (DO ONLY USE FOR TRIAL PERIOD!)"
+value = "eating_trial"
+ls_group = "labels"
+label_group = "eating"
+show_in_ls = true
+use_for_classifier_training = false
+use_for_anomaly_training = false
+training_importance = 0.0
+description = "The horse is eating."
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+
+[[labels]]
+name = "Drinking"
+value = "drinking"
+ls_group = "labels"
+label_group = "drinking"
+show_in_ls = true
+use_for_classifier_training = true
+use_for_anomaly_training = true
+training_importance = 1.0
+description = "The horse is drinking."
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+
+[[labels]]
+name = "Pawing"
+value = "pawing"
+ls_group = "labels"
+label_group = "movement"
+show_in_ls = true
+use_for_classifier_training = false                                                                                 # We need more data, and maybe this is impossible?
+use_for_anomaly_training = false
+training_importance = 1.0
+description = "Pawing is when a horse repeatedly strikes or scrapes the ground (or stall floor) with a front hoof."
+is_alert = false
+is_cluster = true
+cluster_seconds_per_severity_level = 8.0
+cluster_warning_min_severity = 1.0
+
+[[labels]]
+name = "Sit down/Stand up"
+value = "change_stance"
+ls_group = "labels"
+label_group = "movement"
+show_in_ls = true
+use_for_classifier_training = false                                                               # just hard to detect and not much value
+use_for_anomaly_training = true
+training_importance = 1.0
+description = "When the horse is transitioning from sitting to standing or the other way around."
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+
+[[labels]]
+name = "Other Impact Sound"
+value = "other_impact"
+ls_group = "labels"
+label_group = "other"
+show_in_ls = false
+use_for_classifier_training = true
+use_for_anomaly_training = false
+training_importance = 1.0
+description = "Closing Door, Banging, everything that is loud and not produced by the horse."
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+# merge_into = "other"
+
+[[labels]]
+name = "Walking"
+value = "walking"
+ls_group = "labels"
+label_group = "movement"
+show_in_ls = true
+use_for_classifier_training = true
+use_for_anomaly_training = true
+training_importance = 1.0
+description = "Hoof clapping sound, so we can distinguish it from the kick."
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+
+[[labels]]
+name = "Rolling"
+value = "rolling"
+ls_group = "labels"
+label_group = "movement"
+show_in_ls = true
+use_for_classifier_training = true
+use_for_anomaly_training = true
+training_importance = 1.0
+description = "Is that a thing - will they do this when they are in pain or something happened? Merged into change_stance for training."
+is_alert = false
+is_cluster = true
+cluster_seconds_per_severity_level = 10.0
+cluster_warning_min_severity = 1.0
+merge_into = "change_stance"
+
+[[labels]]
+name = "Unsure"
+value = "unsure"
+ls_group = "labels"
+label_group = "other"
+show_in_ls = false
+use_for_classifier_training = false
+use_for_anomaly_training = false
+training_importance = 1.0
+description = "If the labelling person does not know what something is, but it clearly should be labelled as something."
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+
+[[labels]]
+name = "Neigh / Whinny"
+value = "neigh"
+ls_group = "horse_labels"
+label_group = "other"
+show_in_ls = true
+use_for_classifier_training = true
+use_for_anomaly_training = false
+training_importance = 1.0
+description = "Long, high-pitched call, often for attention or communication."
+is_alert = false
+is_cluster = true
+cluster_seconds_per_severity_level = 50.0
+cluster_warning_min_severity = 1.0
+cluster_confidence_floor = 0.985
+
+[[labels]]
+name = "Nicker"
+value = "nicker"
+ls_group = "horse_labels"
+label_group = "other"
+show_in_ls = true
+use_for_classifier_training = true
+use_for_anomaly_training = false
+training_importance = 1.0
+description = "Low-pitched, friendly greeting or anticipatory sound (e.g., feeding time)."
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+
+[[labels]]
+name = "Squeal"
+value = "squeal"
+ls_group = "horse_labels"
+label_group = "distress"
+show_in_ls = true
+use_for_classifier_training = false                                                 # TODO: We need another group so there is more in the testset!
+use_for_anomaly_training = false
+training_importance = 1.0
+description = "Short, high-pitched, often in aggressive or defensive interactions."
+is_alert = true
+alert_confidence_threshold = 0.8
+alert_severity_score = 5.0
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+
+[[labels]]
+name = "Sleeping (regular breathing)"
+value = "sleeping_breathing"
+ls_group = "horse_labels"
+label_group = "sleeping"
+show_in_ls = true
+use_for_classifier_training = true                                                                # TODO: ADD MORE DATA!
+use_for_anomaly_training = true
+training_importance = 1.0
+min_test_carrier_groups = 2
+min_test_sample_count = 8
+description = "Typical sleeping sound, horse is deeply relaxed and breathing slowly and quietly."
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+
+[[labels]]
+name = "Snoring/Sleepvocalisation"
+value = "sleeping_snoring"
+ls_group = "horse_labels"
+label_group = "sleeping"
+show_in_ls = true
+use_for_classifier_training = false                                          # TODO: ADD MORE DATA!
+use_for_anomaly_training = true
+training_importance = 1.0
+description = "Typical snoring sound, horse is deeply relaxed and sleeping."
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+
+[[labels]]
+name = "Snort / Blow"
+value = "snort"
+ls_group = "horse_labels"
+label_group = "other"
+show_in_ls = true
+use_for_classifier_training = true
+use_for_anomaly_training = true
+training_importance = 1.0
+description = "Forceful exhalation; can be alerting, clearing nostrils, or stress-related."
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+
+[[labels]]
+name = "Groan / Moan"
+value = "groan"
+ls_group = "horse_labels"
+label_group = "other"
+show_in_ls = true
+use_for_classifier_training = false                                                     # needs more data, mainly the issue that the test set is too small
+use_for_anomaly_training = true
+training_importance = 1.0
+description = "Low-frequency vocalization, sometimes linked to discomfort or exertion."
+is_alert = false
+is_cluster = true
+cluster_seconds_per_severity_level = 10.0
+cluster_warning_min_severity = 1.0
+
+[[labels]]
+name = "Coughing"
+value = "coughing"
+ls_group = "horse_labels"
+label_group = "respiratory"
+show_in_ls = true
+use_for_classifier_training = true
+use_for_anomaly_training = false
+training_importance = 1.0
+description = "A sudden, forceful expulsion of air from the lungs."
+is_alert = false                                                    # For now use alert, maybe later rather a cluster again
+alert_confidence_threshold = 0.85
+alert_severity_score = 2.0
+is_cluster = true
+cluster_seconds_per_severity_level = 2.0                            # Should give already a warning for one cough
+cluster_warning_min_severity = 1.0
+
+[[labels]]
+name = "Heavy breathing / Panting"
+value = "panting"
+ls_group = "horse_labels"
+label_group = "respiratory"
+show_in_ls = true
+use_for_classifier_training = false                                                # TODO: Needs one more group as data
+use_for_anomaly_training = false
+training_importance = 1.0
+description = "Rapid, shallow breathing often associated with exertion or stress."
+is_alert = false
+is_cluster = true
+cluster_seconds_per_severity_level = 50.0
+cluster_warning_min_severity = 1.0
+cluster_confidence_floor = 0.985
+
+[[labels]]
+name = "Whimmering (Pain/Distress)"
+value = "whimmering"
+ls_group = "horse_labels"
+label_group = "distress"
+show_in_ls = true
+use_for_classifier_training = false                                                                      # TODO: Needs way more data
+use_for_anomaly_training = false
+training_importance = 1.0
+description = "A clear sign that the horse is in distress or pain but unlike a scream it is more quiet."
+is_alert = true
+alert_confidence_threshold = 0.85
+alert_severity_score = 5.0
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+
+[[labels]]
+name = "Scream (Pain/Distress)"
+value = "scream"
+ls_group = "horse_labels"
+label_group = "distress"
+show_in_ls = true
+use_for_classifier_training = true
+use_for_anomaly_training = false
+training_importance = 1.0
+min_train_carrier_fraction = 0.75                                                      # keep >=75% of scream's groups in train
+description = "A loud, high-pitched vocalization, often associated with fear or pain."
+is_alert = true
+alert_confidence_threshold = 0.9
+alert_severity_score = 10.0
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+
+[[labels]]
+name = "Human Talking (DO NOT USE!)"
+value = "human_talking"
+ls_group = "labels"
+label_group = "other"
+show_in_ls = false
+use_for_classifier_training = true
+use_for_anomaly_training = true
+training_importance = 1.0
+description = "Human speech or talking sounds."
+is_alert = false
+is_cluster = true
+cluster_seconds_per_severity_level = 50.0       # TODO: Add a way to only trigger this in the night (or at certain time windows set by the user)
+cluster_warning_min_severity = 1.0
+cluster_confidence_floor = 0.985
+
+[[labels]]
+name = "Anomaly Detector Normal"
+value = "anomaly_normal"
+ls_group = "anomaly_labels"
+label_group = "other"
+show_in_ls = true
+use_for_classifier_training = false
+use_for_anomaly_training = false
+training_importance = 1.0
+description = "Human speech or talking sounds."
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+
+[[labels]]
+name = "Abnormal (Do not use!)"
+value = "anomaly_abnormal"
+ls_group = "anomaly_labels"
+label_group = "other"
+show_in_ls = true
+use_for_classifier_training = false
+use_for_anomaly_training = false
+training_importance = 1.0
+description = "Abnormal or anomalous sound detected."
+is_alert = false
+is_cluster = true
+cluster_seconds_per_severity_level = 3.3333333333
+cluster_warning_min_severity = 1.0
+
+[[labels]]
+name = "Silence"
+value = "silence"
+ls_group = "anomaly_labels"
+label_group = "other"
+show_in_ls = false
+use_for_classifier_training = false
+use_for_anomaly_training = false
+training_importance = 1.0
+description = "Silence detected by loudness threshold."
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+
+[[labels]]
+name = "Urinating"
+value = "urinating"
+ls_group = "labels"
+label_group = "other"
+show_in_ls = true
+use_for_classifier_training = false      # TODO: Needs more data (around 15 samples)
+use_for_anomaly_training = true
+training_importance = 1.0
+description = "Urination detected."
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+
+[[labels]]
+name = "Defecating"
+value = "defecating"
+ls_group = "labels"
+label_group = "other"
+show_in_ls = true
+use_for_classifier_training = false              # Needs more data
+use_for_anomaly_training = true
+training_importance = 1.0
+description = "The horse is defecating/pooping."
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+
+[[labels]]
+name = "Other Animals"
+value = "other_animals"
+ls_group = "labels"
+label_group = "other"
+show_in_ls = true
+use_for_classifier_training = true
+use_for_anomaly_training = true
+training_importance = 1.0
+description = "Other animals (Except Birds), vocalizations, or other sounds made by other animals (Goats, Dogs, Cats)"
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+merge_into = "other"
+
+[[labels]]
+name = "Background"
+value = "background"
+ls_group = "labels"
+label_group = "other"
+show_in_ls = true
+use_for_classifier_training = true
+use_for_anomaly_training = true
+training_importance = 1.0
+description = "Background sounds"
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+merge_into = "other"
+
+[[labels]]
+name = "Other"
+value = "other"
+ls_group = "labels"
+label_group = "other"
+show_in_ls = true
+use_for_classifier_training = true # Is now used as negative class example container
+use_for_anomaly_training = true
+training_importance = 1.0
+# max_samples_per_class = 2000             # Optional per-label override for training cap
+description = "Other sounds"
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+
+[[labels]]
+name = "Human Scream"
+value = "human_scream"
+ls_group = "labels"
+label_group = "other"
+show_in_ls = true
+use_for_classifier_training = false
+use_for_anomaly_training = false
+training_importance = 0.0
+description = "A human scream for horse scream testset"
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+eval_only = true
+
+[[labels]]
+name = "Human Cough"
+value = "human_cough"
+ls_group = "labels"
+label_group = "other"
+show_in_ls = true
+use_for_classifier_training = false
+use_for_anomaly_training = false
+training_importance = 0.0
+description = "A human cough for horse cough testset"
+is_alert = false
+is_cluster = false
+cluster_seconds_per_severity_level = 0.0
+eval_only = true
+
+# -----------------------------------------------------
+# Label Group Severity Settings
+# -----------------------------------------------------
+
+# group_seconds_per_severity_level: covered seconds required for one severity level
+[group_seconds_per_severity_level]
+eating = 0.0
+respiratory = 0.0
+movement = 0.0
+distress = 0.0
+other = 0.0
+
+# -----------------------------------------------------
+# General model and rule parameters
+# -----------------------------------------------------
+
+[model_parameters]
+# ── Shared: used by BOTH server (Python) and edge (Rust) ──
+ignore_labels = [
+  "unsure",
+  "uncertain",
+  "anomaly_normal",
+  "anomaly_abnormal",
+  "silence",
+] # List of labels to filter out and default to background
+silence_threshold = -60.0 # dBFS below which a segment is labeled silence
+dominant_label_floor = 0.55 # min probability to consider a label as dominant
+min_event_confidence = 0.5 # global minimum confidence to include an event
+background_label = "background" # label considered as background noise
+severity_step = 1.0 # step to increase severity for each subsequent event
+group_cluster_warning_min_severity = 1.0 # global minimum severity for group warnings
+merge_gap_seconds = 1.25 # max gap to still merge a cluster label (slightly > snippet)
+burst_window_seconds = 120 # the window in which to look for bursts of events (s)
+default_snippet_duration_seconds = 1.0 # duration of each audio snippet for coverage calculations
+default_model_architecture = "panns"
+night_hour_start = 20 # night window start hour (24h format)
+night_hour_end = 7 # night window end hour (24h format)
+
+# ── Server only: used by Python backend (smartstablemodel) ──
+audio_backend = "rust"       # "rust" (default) or "librosa" (legacy, will differ from edge inference)
+drop_below_floor = true      # whether to drop events below dominant_label_floor
+update_interval_seconds = 10 # how often the decider reevaluates its state
+
+# ── Edge only: used by Rust inference engine (stable-edge-monitor) ──
+cluster_reset_seconds = 600 # reset cluster severity level after this many seconds of inactivity
+
+# Confidence threshold for the classifier (0.0 - 1.0)
+[model_parameters.classifier_thresholds] # This is for inference of the classifier
+panns = 0.7
+yamnet = 0.6 # Lower default for YAMNet
+
+# -----------------------------------------------------
+# Rolling restlessness index
+# -----------------------------------------------------
+# "Is the horse restless" was the single most requested alert in the owner survey (93.5%).
+# The index is NOT produced by the inference loop — the webserver computes it on read from the
+# events already in the DB (GET /api/data/restlessness). That means editing the weights below
+# re-scores all existing history instead of invalidating it: tune, re-request, look at the plot.
+# The config is re-read per request, so no service restart is needed while experimenting.
+#
+# Per bin the score is  sum over labels of  weight * min(covered_seconds, cap_seconds),
+# normalized to points per minute, then smoothed with an EWMA, then compared against this
+# horse's own trailing baseline for the same hour of day.
+#
+# ⚠️ Only weight labels the DEPLOYED CHECKPOINT emits. This file's trainable set is not that
+# list: it describes what *should* be trained, and drifts from a checkpoint whenever a class is
+# dropped for insufficient data. champion_v60 ships 13 classes and has neither `change_stance`
+# nor `other_impact`, both of which this file marks trainable. The authority is the
+# `*_label_mapping.json` beside the checkpoint, or GET /api/models/current.
+# Weights below target champion_v60's classes. The endpoint reports `unseen_labels` for anything
+# configured here that produced no events, which catches this mistake after the fact.
+#
+# Balance note: with equal exposure `horse_kick` supplied ~85% of the positive score, so the
+# index was effectively a kick meter. It keeps the top ceiling (it is survey want #1 and the
+# loudest welfare signal) but is now loudness-gated, and `neigh`/`nicker` — the sounds that
+# actually track feeding anticipation in this barn — are weighted up to compete.
+
+[restlessness]
+enabled = true
+bin_seconds = 60              # matches events_rollup granularity, so the index survives retention
+half_life_minutes = 20.0      # how long a disturbance keeps counting (EWMA half-life)
+baseline_window_days = 14     # trailing history used to learn this horse's normal; 0 disables
+baseline_mode = "hour_of_day" # "hour_of_day" | "flat" | "none"
+baseline_min_samples = 120    # bins needed in a bucket before it is trusted
+baseline_min_scale = 1.0      # floor on the baseline spread (a quiet horse has MAD ~0)
+
+# weight      = points per covered second
+# cap_seconds = saturation per bin; 0 = no cap. Keeps one long episode from owning the index.
+# The per-label CEILING (weight * cap_seconds) is what decides which behaviour can dominate —
+# check it, not the weight, when changing these.
+[restlessness.labels]
+# ── restlessness evidence ──                         ceiling pts/min
+horse_kick = { weight = 5.0, cap_seconds = 5.0 } # 25  survey #1 (73.9%); loudness-gated above
+neigh = { weight = 2.5, cap_seconds = 10.0 }     # 25  survey #3 (58.7%); peaks at feeding time
+rattle = { weight = 1.5, cap_seconds = 12.0 }    # 18  peaks right at the feed
+nicker = { weight = 1.0, cap_seconds = 10.0 }    # 10  anticipatory feeding sound
+walking = { weight = 0.5, cap_seconds = 30.0 }   # 15
+snort = { weight = 0.5, cap_seconds = 10.0 }     #  5
+# ── calm evidence (damps the score) ──
+# Halved from -0.3 after measuring v60 on pi138: eating is 53% of all events there and sat at
+# its cap in most bins, so it acted as a near-constant offset — which the hour-of-day baseline
+# removes anyway — while pushing 641 of 1440 bins negative and making points/min unreadable.
+# The cap stays at 30 s so eating still discriminates across its whole 0-30 s range.
+eating = { weight = -0.15, cap_seconds = 30.0 }  # -4.5
+drinking = { weight = -0.2, cap_seconds = 20.0 } # -4
+# ── emitted by v60 but deliberately unweighted ──
+sleeping_breathing = { weight = 0.0, cap_seconds = 30.0 } # calm, but recall 0.077 — do not trust
+coughing = { weight = 0.0, cap_seconds = 10.0 }           # respiratory, not restlessness
+# Removed: groan, panting, pawing, change_stance — not classes in champion_v60, so they could
+# never fire. Re-add them if a later checkpoint brings them back.
+
+[loudness_parameters]
+enable_adaptive_loudness = true
+loudness_warmup_seconds = 900    # baseline warmup (e.g. 15 min)
+loudness_sigma_multiplier = 2.0  # trigger at mean > μ + kσ
+loudness_min_window_seconds = 10 # required samples in window
+loudness_min_std = 1.0           # floor for σ to avoid division by ~0
+loudness_severity_scale = 1.0    # scale severity (z/k * scale)
