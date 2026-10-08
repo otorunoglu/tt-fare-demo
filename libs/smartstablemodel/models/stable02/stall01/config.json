@@ -1,0 +1,22 @@
+{
+  "stall_id": "stall01",
+  "stable_id": "stable02",
+  "anomaly_model_config": {
+    "anomaly_threshold": 1e-05,
+    "training_timestamp": "0",
+    "latent_dim": 128,
+    "n_mels": 64,
+    "fixed_tbins": 96,
+    "training_samples": 0,
+    "mean_reconstruction_error": 0.0006,
+    "std_reconstruction_error": 0.0002,
+    "model_version": "1.0.0",
+    "mel_mean": 0.0,
+    "mel_std": 1.0
+  },
+  "soundscape_classifier_config": {
+    "kick_prop_threshold": null,
+    "default_threshold": 0.9,
+    "thresholds": {}
+  }
+}

@@ -1,0 +1,25 @@
+[soundscape_detector]
+learning_rate = 1e-4
+batch_size = 32
+num_epochs = 50
+use_augmentation = true
+augmentation_factor = 5
+max_samples_per_class = 1000
+dropout_rates = [0.4, 0.3, 0.2]
+min_samples_per_class = 20
+# Training metric for early stopping: "accuracy", "macro_f1", "balanced_accuracy"
+# Options: "accuracy", "macro_f1", "balanced_accuracy", "weighted_f1"
+# For imbalanced data, "macro_f1" treats all classes equally, 
+# while "weighted_f1" considers class importance weights. 
+# (requires label weights in labels.json e.g. "training_importance": 2.0)
+training_metric = "weighted_f1"
+register_model = true
+auto_promote_to_production = false
+
+# Short-event compositing (applies only to non-background labels)
+short_event_padding_enabled = true
+short_event_threshold_seconds = 2.0
+short_event_crossfade_ms = 40
+short_event_position_mode = "random"   # random | center
+short_event_seed = 42                    # set to null for non-deterministic placement
+short_event_background_label = "background" # source pool label for background clips

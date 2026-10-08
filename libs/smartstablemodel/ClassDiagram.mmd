@@ -1,0 +1,96 @@
+---
+title: Horse Soundscape Monitoring - High-Level Architecture
+---
+classDiagram
+
+	namespace scripts {
+		class metamodel_replay {
+			+main()
+			+replay_events(events, evaluator)
+		}
+		class edge_realtime_monitor {
+			+main()
+		}
+		class visualize_data {
+			+main()
+			+plot_window()
+			+plot_multi_day()
+		}
+		class import_logs {
+			+main()
+			+import_csv()
+			+optionally_generate_warnings()
+		}
+	}
+
+	namespace services {
+		class Recorder {
+			+record_audio()
+			+save_to_store()
+		}
+		class DataStore {
+			%% Tables: events(timestamp PK), warnings
+			+append_event(event)
+			+append_warning(warning)
+			+bin_counts_by_label(start, end, bin_s)
+			+warnings(start, end)
+			+time_bounds()
+		}
+		%% Formerly metamodel_rules
+		class MetaModelDecider {
+			+evaluate(event)
+			+evaluate_batch(events) %% used by importer for fast warnings
+			%% Persists emitted warnings to DataStore
+		}
+	}
+
+	namespace domain {
+		class Warning {
+			+label: str
+			+timestamp: str
+			+confidence: float
+			+warning_type: Enum
+			+severity: float
+			+as_dict()
+    	}
+		class Event {
+			+timestamp: str
+			+label: str
+			+confidence: float
+			+loudness: float
+			+as_dict()
+		}
+		
+		class User {
+			<<actor>>
+			+receive_alert(warning)
+		}
+		class DecisionResult {
+			+warning_type: str
+			+label: str
+			+confidence: float
+			+severity: float
+			+contributing_factors: List[str]
+			+as_dict()
+		}
+	}
+
+
+	Recorder --> Event : creates
+	Recorder --> DataStore : sends event
+	DataStore --> Event : stores
+	MetaModelDecider --> Event : evaluates
+	MetaModelDecider --> DataStore : persists warnings
+	MetaModelDecider --> User : alerts
+	MetaModelDecider --> Warning : generates
+	MetaModelDecider --> DecisionResult : returns
+	visualize_data ..> DataStore : reads aggregates & warnings
+	visualize_data ..> Warning : overlays
+	import_logs ..> DataStore : imports events
+	import_logs ..> MetaModelDecider : optional fast warnings
+
+	%% %% Scripts:
+	%% metamodel_replay ..> MetaModelDecider : uses
+	%% edge_realtime_monitor ..> DataStore : uses
+
+	

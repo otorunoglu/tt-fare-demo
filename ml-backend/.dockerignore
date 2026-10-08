@@ -1,0 +1,14 @@
+.git
+__pycache__/
+*.pyc
+panns_data/
+.env
+*.pyo
+*.pyd
+*.swp
+*.tmp
+*.log
+dist/
+build/
+.eggs/
+*.egg-info/

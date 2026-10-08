@@ -1,0 +1,18 @@
+[project]
+name = "smartstablemodel"
+version = "0.1.0"
+description = "Smart stable model for audio classification"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "scikit-learn>=1.0.0",
+    "numpy",
+    "tomli>=2.0.1; python_version < '3.11'",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/smartstablemodel"]

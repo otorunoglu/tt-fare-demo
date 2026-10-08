@@ -1,0 +1,303 @@
+        </div>
+    </header>
+    <!-- HOW IT WORKS -->
+    <div class="step-card">
+        <div class="row text-center align-items-center g-2">
+            <div class="col-md-3 step-item">
+                <span class="step-icon"><i class="fa-solid fa-play"></i></span>
+                <span class="step-number">01.</span>
+                <strong>Click Play</strong><br><small>Start the horse sound test</small>
+            </div>
+            <div class="col-md-3 step-item border-end">
+                <span class="step-icon"><i class="fa-solid fa-headphones"></i></span>
+                <span class="step-number">02.</span>
+                <strong>Listen &amp; Guess</strong><br><small>Listen to the sound</small>
+            </div>
+            <div class="col-md-3 step-item border-end">
+                <span class="step-icon"><i class="fa-solid fa-brain"></i></span>
+                <span class="step-number">03.</span>
+                <strong>AI Analyzes</strong><br><small>Analyse acoustic features</small>
+            </div>
+            <div class="col-md-3 step-item">
+                <span class="step-icon"><i class="fa-solid fa-chart-simple"></i></span>
+                <span class="step-number">04.</span>
+                <strong>Result Revealed</strong><br><small>Prediction shown instantly</small>
+            </div>
+        </div>
+    </div>
+    <!-- MAIN CONTENT -->
+    <div class="row g-4">
+        <div class="col-lg-5">
+            <div class="card p-4">
+                <div class="signal-header">
+                    <div class="section-title">
+                        <span class="section-icon"><i class="fa-solid fa-wave-square"></i></span>
+                        Live Sound Signal
+                    </div>
+                    <span class="signal-status"><span class="mini-dot"></span> MIC / AUDIO</span>
+                </div>
+                <p class="section-description">Real-time acoustic signal captured from the recording microphone.</p>
+                <canvas id="waveform-canvas"></canvas>
+                <div class="spectrogram-wrapper">
+                    <div class="spectrogram-title">
+                        <strong><i class="fa-solid fa-chart-area me-2"></i>Live Spectrogram</strong>
+                        <span>Frequency / Time</span>
+                    </div>
+                    <div style="position: relative; width: 100%; height: 180px;">
+                        <canvas id="spectrogram-canvas" style="width: 100%; height: 100%; display: block; border: 1px solid #BFD5C7; border-radius: 16px; background: #050417;"></canvas>
+                        <div style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; padding: 10px 15px; display: flex; flex-direction: column; justify-content: space-between; font-size: 10px; font-weight: 600; color: rgba(255, 255, 255, 0.85);">
+                            <div style="display: flex; justify-content: space-between;"><span>8 kHz</span></div>
+                            <div style="display: flex; justify-content: space-between;"><span>4 kHz</span></div>
+                            <div style="display: flex; justify-content: space-between;"><span>0 kHz</span><span>Time →</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="card p-4 control-card">
+                <div class="control-info">
+                    <div class="control-icon"><i class="fa-solid fa-microphone-lines"></i></div>
+                    <div>
+                        <div class="section-title">Sound Test</div>
+                        <p class="section-description mb-0">Play a random stable sound and let the AI analyse the recording.</p>
+                    </div>
+                </div>
+                <button id="playBtn" class="btn btn-success w-100 mt-2">
+                    <i class="fa-solid fa-play me-2"></i>Play Sound &amp; Test
+                </button>
+            </div>
+        </div>
+        <div class="col-lg-7">
+            <div class="card p-4">
+                <div class="ai-header">
+                    <div class="section-title">
+                        <span class="section-icon"><i class="fa-solid fa-brain"></i></span>
+                        Live AI Prediction
+                    </div>
+                    <span class="runtime-badge"><i class="fa-solid fa-microchip me-1"></i>ONNX Runtime</span>
+                </div>
+                <p class="section-description mb-3">AI analysis running locally on edge hardware.</p>
+                <div class="ai-display-box">
+                    <small id="actionStatus" class="text-uppercase fw-bold">SYSTEM READY</small>
+                    <h1 id="predictionText">WAITING FOR SOUND...</h1>
+                    <div class="confidence-badge">
+                        <i class="fa-solid fa-brain me-1"></i>
+                        <span id="confidenceText">0%</span> confidence
+                    </div>
+                </div>
+                <div class="section-title mb-1 mt-3">
+                    <span class="section-icon" style="width: 30px; height: 30px; font-size: 0.85rem;"><i class="fa-solid fa-chart-column"></i></span>
+                    Model Probabilities (8 Classes)
+                </div>
+                <p class="section-description mb-3">Confidence distribution across all 8 monitored stable audio categories.</p>
+                <!-- 8 CLASSES -->
+                <script>
+                    const classesList = ['eating', 'drinking', 'horse_kick', 'neigh', 'nicker', 'rattle', 'scream', 'snort'];
+                    const iconsList = ['leaf', 'droplet', 'shoe-prints', 'horse-head', 'comment-dots', 'bell', 'volume-high', 'wind'];
+                    const labelsList = ['Eating', 'Drinking', 'Horse Kick', 'Neigh', 'Nicker', 'Rattle', 'Scream', 'Snort'];
+                    for(let i=0; i<8; i++) {
+                        document.write(`
+                            <div class="probability-row">
+                                <div class="probability-label">
+                                    <span><i class="fa-solid fa-${iconsList[i]} me-2 text-success"></i>${labelsList[i]}</span>
+                                    <span id="value-${classesList[i]}" class="probability-value">0%</span>
+                                </div>
+                                <div class="progress">
+                                    <div id="bar-${classesList[i]}" class="progress-bar" style="width: 0%;"></div>
+                                </div>
+                            </div>
+                        `);
+                    }
+                </script>
+            </div>
+        </div>
+    </div>
+    <!-- FOOTER -->
+    <footer>
+        <div class="footer-content">
+            <div class="footer-main">
+                <div class="footer-project">
+                    <div class="footer-project-title">Tekoälyä <span>Talleille</span></div>
+                    <p class="footer-description">AI for Horse Welfare · Interactive Acoustic Monitoring Demonstrator</p>
+                    <div class="footer-technologies">
+                        <span class="technology-pill">Raspberry Pi</span>
+                        <span class="technology-pill">Audio AI</span>
+                        <span class="technology-pill">Acoustic Analysis</span>
+                        <span class="technology-pill">Real-Time Monitoring</span>
+                    </div>
+                </div>
+                <div class="footer-partners">
+                    <div class="partners-title">Project Partners</div>
+                    <div class="footer-logos">
+                        <div class="footer-logo-item"><img src="{{ url_for('static', filename='images/hevostietokeskus_logo.png') }}" alt="Hevostietokeskus"></div>
+                        <div class="footer-logo-item"><img src="{{ url_for('static', filename='images/savonia_logo.jpg') }}" alt="Savonia"></div>
+                        <div class="footer-logo-item"><img src="{{ url_for('static', filename='images/ely-keskus-logo.jpg') }}" alt="ELY"></div>
+                        <div class="footer-logo-item"><img src="{{ url_for('static', filename='images/eu_logo.png') }}" alt="EU"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <div class="footer-bottom-left"><span>Edge AI Acoustic Monitoring System for Equine Welfare</span></div>
+                <span>Tekoälyä Talleille · 2026</span>
+            </div>
+        </div>
+    </footer>
+</div>
+<!-- JAVASCRIPT ANIMATIONS & FETCH LOOPS -->
+<script>
+    const waveformCanvas = document.getElementById('waveform-canvas');
+    const waveformCtx = waveformCanvas.getContext('2d');
+    function resizeWaveformCanvas() {
+        const width = waveformCanvas.clientWidth || 400;
+        const height = waveformCanvas.clientHeight || 235;
+        const dpr = window.devicePixelRatio || 1;
+        waveformCanvas.width = width * dpr;
+        waveformCanvas.height = height * dpr;
+        waveformCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    window.addEventListener('resize', resizeWaveformCanvas);
+    resizeWaveformCanvas();
+    let isAnimating = false;
+    let signalPoints = new Array(150).fill(0);
+    function drawWaveform(active = false) {
+        const width = waveformCanvas.clientWidth || 400;
+        const height = waveformCanvas.clientHeight || 235;
+        const gradient = waveformCtx.createLinearGradient(0, 0, 0, height);
+        gradient.addColorStop(0, '#F9FCFA');
+        gradient.addColorStop(1, '#E6F2EA');
+        waveformCtx.fillStyle = gradient;
+        waveformCtx.fillRect(0, 0, width, height);
+        const time = Date.now() * 0.002;
+        for (let i = 0; i < signalPoints.length; i++) {
+            let target = active ? (Math.sin(i * 0.32 + time) * 0.35 + Math.sin(i * 0.75 - time * 1.3) * 0.20) * height * 0.25 : 0;
+            signalPoints[i] = signalPoints[i] * 0.82 + target * 0.18;
+        }
+        waveformCtx.beginPath();
+        for (let i = 0; i < signalPoints.length; i++) {
+            const x = (i / (signalPoints.length - 1)) * width;
+            const y = height / 2 + signalPoints[i];
+            i === 0 ? waveformCtx.moveTo(x, y) : waveformCtx.lineTo(x, y);
+        }
+        waveformCtx.lineWidth = active ? 2.4 : 1.8;
+        waveformCtx.strokeStyle = active ? '#237A45' : '#5C9F73';
+        waveformCtx.stroke();
+    }
+
+    // Spectrogram Setup with Organic Waterfall Flow (Grid lines removed)
+    const spectrogramCanvas = document.getElementById('spectrogram-canvas');
+    const spectrogramCtx = spectrogramCanvas.getContext('2d');
+    let spectrogramBuffer = [];
+
+    function resizeSpectrogramCanvas() {
+        const width = spectrogramCanvas.clientWidth || 400;
+        const height = spectrogramCanvas.clientHeight || 180;
+        const dpr = window.devicePixelRatio || 1;
+        spectrogramCanvas.width = width * dpr;
+        spectrogramCanvas.height = height * dpr;
+        spectrogramCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    window.addEventListener('resize', resizeSpectrogramCanvas);
+    resizeSpectrogramCanvas();
+
+    function drawSpectrogram(active = false) {
+        const width = spectrogramCanvas.clientWidth || 400;
+        const height = spectrogramCanvas.clientHeight || 180;
+        
+        const colCount = Math.floor(width / 2);
+        if (spectrogramBuffer.length !== colCount) {
+            spectrogramBuffer = [];
+            for (let i = 0; i < colCount; i++) {
+                spectrogramBuffer.push(new Float32Array(height));
+            }
+        }
+        
+        let newCol = new Float32Array(height);
+        let shiftSeed = Date.now() * 0.01;
+        
+        for (let y = 0; y < height; y++) {
+            let normY = y / height; // 0 at top (8kHz), 1 at bottom (0kHz)
+            let intensity = 0.02; // Ambient floor
+            
+            if (active) {
+                // True organic noise: combine random frequency bands instead of a strict grid
+                let band1 = Math.sin(normY * 15 - shiftSeed * 2);
+                let band2 = Math.cos(normY * 30 + shiftSeed * 3);
+                let combined = (band1 + band2) * 0.5;
+                
+                intensity = Math.abs(combined) * 0.9 + (Math.random() * 0.3);
+                
+                // Concentrate acoustic energy in mid-to-lower frequencies (horse vocalization range)
+                if (normY > 0.4 && normY < 0.85) {
+                    intensity *= 1.5;
+                }
+            } else {
+                intensity += Math.random() * 0.03;
+            }
+            
+            newCol[y] = Math.min(1.0, Math.max(0.0, intensity));
+        }
+        
+        // Shift buffer left, push new column on the right
+        spectrogramBuffer.shift();
+        spectrogramBuffer.push(newCol);
+        
+        // Clear canvas background
+        spectrogramCtx.fillStyle = '#050417';
+        spectrogramCtx.fillRect(0, 0, width, height);
+        
+        // Render columns smoothly as a waterfall stream
+        for (let x = 0; x < spectrogramBuffer.length; x++) {
+            let col = spectrogramBuffer[x];
+            for (let y = 0; y < height; y++) {
+                let val = col[y];
+                if (val > 0.08) {
+                    let g = Math.floor(val * 200);
+                    let b = 255;
+                    let r = active ? Math.floor(val * 140) : 0;
+                    spectrogramCtx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+                    spectrogramCtx.fillRect(x * 2, y, 2, 1);
+                }
+            }
+        }
+    }
+
+    setInterval(() => {
+        drawWaveform(isAnimating);
+        drawSpectrogram(isAnimating);
+    }, 40);
+
+    const playBtn = document.getElementById('playBtn');
+    playBtn.addEventListener('click', () => {
+        isAnimating = true;
+        playBtn.disabled = true;
+        playBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-2"></i> Processing Inference...';
+        
+        fetch('/trigger/play').catch(() => {});
+        setTimeout(() => { isAnimating = false; }, 5000);
+    });
+
+    setInterval(() => {
+        fetch('/status')
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('actionStatus').innerText = data.action;
+                document.getElementById('predictionText').innerText = data.prediction;
+                document.getElementById('confidenceText').innerText = data.confidence;
+                if (data.action === "COMPLETED" || data.action === "System Ready") {
+                    isAnimating = false;
+                    playBtn.disabled = false;
+                    playBtn.innerHTML = '<i class="fa-solid fa-play me-2"></i> Play Sound &amp; Test';
+                }
+                if (data.probabilities) {
+                    const classes = ['eating', 'drinking', 'horse_kick', 'neigh', 'nicker', 'rattle', 'scream', 'snort'];
+                    classes.forEach(cls => {
+                        if (data.probabilities[cls] !== undefined) {
+                            document.getElementById(`bar-${cls}`).style.width = data.probabilities[cls] + '%';
+                            document.getElementById(`value-${cls}`).innerText = data.probabilities[cls] + '%';
+                        }
+                    });
+                }
+            }).catch(() => {});
+    }, 1000);
+</script>
+</body>
+</html>

@@ -1,0 +1,66 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Run with Simulation File",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=stable-edge-monitor-rust",
+                    "--package=stable-edge-monitor-rust",
+                    "--release"
+                ],
+                "filter": {
+                    "name": "stable-edge-monitor-rust",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "--stable-id",
+                "stable01",
+                "--stall-id",
+                "stall01",
+                "--config-path",
+                "smart_stable_model_config.yaml",
+                "--simulate-file",
+                "data/audio/stable03_stall01_horse01_20251214_000008_mic.flac"
+            ],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "RUST_BACKTRACE": "1",
+                "RUST_LOG": "info"
+            }
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug Stable Monitor",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=stable-edge-monitor-rust",
+                    "--package=stable-edge-monitor-rust"
+                ],
+                "filter": {
+                    "name": "stable-edge-monitor-rust",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "--stable-id",
+                "stable01",
+                "--stall-id",
+                "stall01",
+                "--config-path",
+                "smart_stable_model_config.yaml"
+            ],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "RUST_BACKTRACE": "1",
+                "RUST_LOG": "info"
+            }
+        }
+    ]
+}

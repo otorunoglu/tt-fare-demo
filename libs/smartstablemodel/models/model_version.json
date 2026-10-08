@@ -1,0 +1,10 @@
+{
+  "name": "soundscape_classifier",
+  "version": "45",
+  "alias": "champion",
+  "run_id": "e98cd5274566470b803c3aea5615c8d1",
+  "source": "models:/m-278474ba9d1d420abbdd683397a763e4",
+  "description": "Classes: 15, Samples: 6505",
+  "creation_timestamp": 1768303206678,
+  "last_updated_timestamp": 1768303206995
+}

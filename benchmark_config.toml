@@ -1,0 +1,14 @@
+[paths]
+embedder = "edge-monitor/data/models/champion_v60_embedder.onnx"
+classifier = "edge-monitor/data/models/champion_v60_classifier.onnx"
+label_mapping = "edge-monitor/data/models/champion_v60_label_mapping.json"
+model_config = "edge-monitor/config/smart_stable_model_config.toml"
+
+[runtime]
+device = ""
+sample_rate = 16000
+segment_duration = 2.0
+segment_overlap = 0.5
+run_seconds = 0.0
+log_threshold = 0.5
+log_level = "INFO"

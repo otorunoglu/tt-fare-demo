@@ -1,0 +1,24 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../smartstablemodel"
+		},
+		{
+			"path": "../ml_audio_core"
+		},
+		{
+			"path": "../stable-edge-monitor"
+		}
+	],
+	"settings": {
+		"workbench.colorCustomizations": {
+			"titleBar.activeBackground": "#b31b1b",
+			"titleBar.activeForeground": "#ffffff",
+			"titleBar.inactiveBackground": "#7a1111",
+			"titleBar.inactiveForeground": "#cccccc"
+		}
+	}
+}

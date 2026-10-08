@@ -1,0 +1,18 @@
+[Unit]
+Description=Update stable-edge-monitor from git and rebuild the webserver
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=edge-monitor
+Group=audio
+WorkingDirectory=/home/edge-monitor/equine-ai-monitor/apps/edge-monitor
+Environment=REPO_DIR=/home/edge-monitor/equine-ai-monitor/apps/edge-monitor
+Environment=EDGE_MONITOR_BRANCH=dev
+Environment=EDGE_MONITOR_REMOTE=origin
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/edge-monitor/.cargo/bin
+ExecStart=/home/edge-monitor/equine-ai-monitor/apps/edge-monitor/scripts/update_edge_monitor.sh
+
+[Install]
+WantedBy=multi-user.target

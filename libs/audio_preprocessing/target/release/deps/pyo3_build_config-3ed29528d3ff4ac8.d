@@ -1,0 +1,14 @@
+/home/barn/project_folder/libs/audio_preprocessing/target/release/deps/pyo3_build_config-3ed29528d3ff4ac8.d: /home/barn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/lib.rs /home/barn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/errors.rs /home/barn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/impl_.rs /home/barn/project_folder/libs/audio_preprocessing/target/release/build/pyo3-build-config-11d136fef650abfb/out/pyo3-build-config-file.txt /home/barn/project_folder/libs/audio_preprocessing/target/release/build/pyo3-build-config-11d136fef650abfb/out/pyo3-build-config.txt
+
+/home/barn/project_folder/libs/audio_preprocessing/target/release/deps/libpyo3_build_config-3ed29528d3ff4ac8.rlib: /home/barn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/lib.rs /home/barn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/errors.rs /home/barn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/impl_.rs /home/barn/project_folder/libs/audio_preprocessing/target/release/build/pyo3-build-config-11d136fef650abfb/out/pyo3-build-config-file.txt /home/barn/project_folder/libs/audio_preprocessing/target/release/build/pyo3-build-config-11d136fef650abfb/out/pyo3-build-config.txt
+
+/home/barn/project_folder/libs/audio_preprocessing/target/release/deps/libpyo3_build_config-3ed29528d3ff4ac8.rmeta: /home/barn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/lib.rs /home/barn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/errors.rs /home/barn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/impl_.rs /home/barn/project_folder/libs/audio_preprocessing/target/release/build/pyo3-build-config-11d136fef650abfb/out/pyo3-build-config-file.txt /home/barn/project_folder/libs/audio_preprocessing/target/release/build/pyo3-build-config-11d136fef650abfb/out/pyo3-build-config.txt
+
+/home/barn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/lib.rs:
+/home/barn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/errors.rs:
+/home/barn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/impl_.rs:
+/home/barn/project_folder/libs/audio_preprocessing/target/release/build/pyo3-build-config-11d136fef650abfb/out/pyo3-build-config-file.txt:
+/home/barn/project_folder/libs/audio_preprocessing/target/release/build/pyo3-build-config-11d136fef650abfb/out/pyo3-build-config.txt:
+
+# env-dep:CARGO_PKG_VERSION=0.21.2
+# env-dep:OUT_DIR=/home/barn/project_folder/libs/audio_preprocessing/target/release/build/pyo3-build-config-11d136fef650abfb/out

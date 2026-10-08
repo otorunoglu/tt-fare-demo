@@ -1,0 +1,12 @@
+{
+  "workbench.colorCustomizations": {
+    "titleBar.activeBackground": "#b31b1b",
+    "titleBar.activeForeground": "#ffffff",
+    "titleBar.inactiveBackground": "#7a1111",
+    "titleBar.inactiveForeground": "#cccccc"
+  },
+  "python.analysis.extraPaths": ["./src"],
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": true,
+  "python.testing.autoTestDiscoverOnSaveEnabled": false
+}

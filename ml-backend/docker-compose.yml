@@ -1,0 +1,139 @@
+services:
+  smart-stable-ml-backend:
+    build:
+      context: ../..
+      dockerfile: apps/ml-backend/Dockerfile
+      labels:
+        - project=soundscape_detector # Label for the project, this makes pruning easier
+        # show dangeling: docker images --filter "dangling=true" --filter "label=project=soundscape_detector"
+        # prune dangeling: docker image prune --filter "label=project=soundscape_detector" --force
+    container_name: smart-stable-ml-backend
+    runtime: nvidia
+    networks:
+      ipvlan_net:
+        ipv4_address: 10.212.11.213
+      internal_net: # For MLflow communication
+    volumes:
+      # Python packages
+      - ../../libs/ml_audio_core/src/ml_audio_core:/app/src/ml_audio_core:ro
+      - ../../libs/ml_audio_core/tests:/app/tests/ml_audio_core:ro
+      - ../../libs/smartstablemodel/src/smartstablemodel:/app/src/smartstablemodel:ro
+
+      # Model artifacts/cache folder
+      - ./data/model_cache:/app/smartstablemodel/models
+      # Database folder for soundscape metamodel
+      - ./data/smartstable:/app/data/smartstable
+      # Human voices dataset
+      - ./data/smartstable/people:/app/data/people
+      # default models folder
+      - ../../libs/smartstablemodel/models/default:/app/smartstablemodel/models/default:ro
+      # RCLONE CONFIGL
+      - ~/.config/rclone:/root/.config/rclone:ro
+      # NOTE: The Rust audio_preprocessing bridge is compiled into the image at build time.
+      # Changes to libs/audio_preprocessing require `docker compose build`.
+
+      # Dataset folders:
+      - ./data/datasets:/datasets
+
+      # backend application code
+      - ./src/ml_backend:/app/src/ml_backend:ro
+      - ./smart-stable-logs:/smart-stable-logs
+      - ../../config:/config:ro
+      - ./config:/app/config:ro
+      - /MNT/horse/horse-data/data/label_studio_data:/label-studio/data
+      - /MNT/horse/horse-data/data/grid_videos:/label-studio/data/grid_videos
+      - /MNT/horse/horse-data/data/audio:/label-studio/data/audio
+      - /MNT/horse/horse-data/data/video:/label-studio/data/video
+      - /MNT/horse/horse-data/data/audio_test_files:/label-studio/data/audio_test_files
+      - /MNT/horse/horse-data/data/mlflow:/mlflow # Shared with MLflow for artifact storage
+      - ./.vscode/docker:/app/.vscode:ro
+
+      # Add local timezone and timezone data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - PYTHONPATH=/app/src
+      - LABEL_STUDIO_URL=http://10.212.11.214:30030
+      - LABEL_STUDIO_PERSONAL_TOKEN=${LABEL_STUDIO_PERSONAL_TOKEN}
+      - ML_BACKEND_URL=${ML_BACKEND_URL}
+      - ML_BACKEND_PORT=${ML_BACKEND_PORT}
+      - NVIDIA_VISIBLE_DEVICES=6
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+      # - ML_TF_GPU_MEM_LIMIT_MB=8192
+      - PANNS_DEVICE=cuda
+      - SMARTSTABLE_CONFIG_DIR=/app/config/smartstable
+      - SMARTSTABLE_MODELS_DIR=/app/smartstablemodel/models
+      - SMARTSTABLE_METAMODEL_DIR=/smart-stable-logs
+      - PANNS_CHECKPOINT_DIR=/app/panns_data/Cnn14_16k_mAP=0.438.pth
+      - TASKS_CONFIG_PATH=/app/config/smartstable/task_config.toml
+      - MLFLOW_TRACKING_URI=http://10.212.11.220:30035
+      - GIT_PYTHON_REFRESH=quiet
+      # Suppress verbose numba logs
+      - NUMBA_LOGGING_LEVEL=WARNING
+      # MLFLOW
+      - MLFLOW_LOAD_PRODUCTION_ON_STARTUP=true
+      - SMARTSTABLE_DB_PATH=/app/data/smartstable/soundscape.db
+      - ALERT_PROJECT_ID=1
+    command: >
+      python -Xfrozen_modules=off -m debugpy --listen 0.0.0.0:30041 -m ml_backend.ml_backend
+
+  label-studio:
+    image: heartexlabs/label-studio:latest # last version 1.20 (upgraded to 1.21 on 2025-10-02)
+    container_name: label-studio
+    networks:
+      ipvlan_net:
+        ipv4_address: 10.212.11.214
+    volumes:
+      - /MNT/horse/horse-data/data/label_studio_data:/label-studio/data
+      - /MNT/horse/horse-data/data/audio:/label-studio/data/audio:ro
+      - /MNT/horse/horse-data/data/video:/label-studio/data/video:ro
+      - /MNT/horse/horse-data/data/grid_videos:/label-studio/data/grid_videos:ro
+      - /MNT/horse/horse-data/data/audio_gut:/label-studio/data/audio_gut:ro
+    environment:
+      - LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED=true
+      - LABEL_STUDIO_PORT=30030
+      - LABEL_STUDIO_ML_BACKEND_URL=http://10.212.11.213:30040
+
+  mlflow:
+      image: ghcr.io/mlflow/mlflow:latest
+      container_name: mlflow-server
+      networks:
+        ipvlan_net:
+          ipv4_address: 10.212.11.220
+        internal_net:
+      volumes:
+        - /MNT/horse/horse-data/data/mlflow:/mlflow
+      environment:
+        - MLFLOW_BACKEND_STORE_URI=sqlite:///mlflow/mlflow.db
+        - MLFLOW_DEFAULT_ARTIFACT_ROOT=/mlflow/artifacts
+        - MLFLOW_SERVER_CORS_ALLOWED_ORIGINS=http://10.212.11.220:30035
+        - MLFLOW_SERVER_ALLOWED_HOSTS=10.212.11.220:30035,10.212.11.220
+      command: mlflow server --host 0.0.0.0 --port 30035 --backend-store-uri sqlite:///mlflow/mlflow.db --default-artifact-root /mlflow/artifacts
+
+  smartstable-viz:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+      labels:
+        - project=soundscape_detector # Label for the project, this makes pruning easier
+        # show dangeling: docker images --filter "dangling=true" --filter "label=project=soundscape_detector"
+        # prune dangeling: docker image prune --filter "label=project=soundscape_detector" --force
+    container_name: smartstable-viz
+    networks:
+      ipvlan_net:
+        ipv4_address: 10.212.11.221
+    volumes:
+      - ../../libs/smartstablemodel/src/smartstablemodel:/app/src/smartstablemodel:ro
+      - ./data/smartstable:/app/data/smartstable
+      - ../../config:/config:ro
+    environment:
+      - PYTHONPATH=/app/src
+      - SMARTSTABLE_DB_PATH=/app/data/smartstable/soundscape.db
+    command: >
+      streamlit run /app/src/smartstablemodel/scripts/streamlit_visualization.py --server.address=0.0.0.0 --server.port=30036
+
+networks:
+  ipvlan_net:
+    external: true
+  internal_net:
+    driver: bridge # Internal network for MLflow <-> ML backend communication

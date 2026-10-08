@@ -1,0 +1,53 @@
+{
+  "label_to_idx": {
+    "snort": 0,
+    "nicker": 1,
+    "walking": 2,
+    "neigh": 3,
+    "panting": 4,
+    "groan": 5,
+    "horse_kick": 6,
+    "uncertain": 7,
+    "eating": 8,
+    "pawing": 9,
+    "rattle": 10,
+    "bird_tweet": 11,
+    "bird_wing_flap": 12,
+    "change_stance": 13,
+    "human_talking": 14
+  },
+  "idx_to_label": {
+    "0": "snort",
+    "1": "nicker",
+    "2": "walking",
+    "3": "neigh",
+    "4": "panting",
+    "5": "groan",
+    "6": "horse_kick",
+    "7": "uncertain",
+    "8": "eating",
+    "9": "pawing",
+    "10": "rattle",
+    "11": "bird_tweet",
+    "12": "bird_wing_flap",
+    "13": "change_stance",
+    "14": "human_talking"
+  },
+  "valid_labels": [
+    "snort",
+    "nicker",
+    "walking",
+    "neigh",
+    "panting",
+    "groan",
+    "horse_kick",
+    "uncertain",
+    "eating",
+    "pawing",
+    "rattle",
+    "bird_tweet",
+    "bird_wing_flap",
+    "change_stance",
+    "human_talking"
+  ]
+}

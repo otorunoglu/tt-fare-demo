@@ -1,0 +1,45 @@
+### Export Label Sum
+
+POST {{hostname}}/api/smartstable/export/label_sum/batch HTTP/1.1
+Content-Type: application/json
+
+{
+  "confidence_threshold": "0.0",
+  "date_from": "2026-02-02",
+  "date_until": "2026-03-28",
+  "end_time": "05:00",
+  "start_time": "19:00",
+  "sum_labels": [
+    "eating",
+    "snoring",
+    "drinking"
+  ]
+}
+
+
+### Export Testset Bundle By Model Version
+
+POST {{hostname}}/api/smartstable/export/testset/bundle HTTP/1.1
+Content-Type: application/json
+
+{
+  "model_version": "v29",
+  "model_architecture": "panns",
+  "snippet_duration_seconds": 4.0
+}
+
+
+### Publish Champion ONNX To Rclone
+
+POST {{hostname}}/api/smartstable/champion/onnx/publish HTTP/1.1
+Content-Type: application/json
+
+{
+  "model_architecture": "panns",
+  "publish_latest_alias": true
+}
+
+
+### Get Full Task Source JSON
+
+GET {{hostname}}/api/smartstable/tasks/get-task-source?project_id=1&task_number=1 HTTP/1.1

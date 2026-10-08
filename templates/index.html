@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tekoälyä Talleille - AI for Horse Welfare</title>
+    <!-- Bootstrap -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap.min.css') }}">
+     <!-- Font Awesome -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/all.min.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="container py-2">
+    <!-- HEADER -->
+    <header class="main-header">
+        <div class="header-content">
+            <div class="header-title-area">
+                <img src="{{ url_for('static', filename='images/Tekoalya_Talleille_logo.png') }}" alt="Tekoälyä Talleille Logo" class="header-horse-img">
+                <div>
+                    <h1 class="brand-title">Tekoälyä <span>Talleille</span></h1>
+                    <p class="brand-subtitle">AI for Horse Welfare</p>
+                    <p class="brand-description">Live Horse Sound Monitor &amp; AI Predictor</p>
+                </div>
+            </div>
+            <div class="system-status">
+                <span class="live-dot"></span>
+                <div>
+                    <strong>LIVE SYSTEM</strong>
+                    <small>Acoustic monitoring active</small>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- HOW IT WORKS -->
+    <div class="step-card">
+        <div class="row align-items-start g-0">
+            <div class="col-md-3 step-item">
+                <div><span class="step-icon"><i class="fa-solid fa-play"></i></span><span class="step-number">STEP 01</span></div>
+                <strong>Start Sound Test</strong>
+                <small>Play a recorded horse sound through the audio system.</small>
+            </div>
+            <div class="col-md-3 step-item">
+                <div><span class="step-icon"><i class="fa-solid fa-headphones"></i></span><span class="step-number">STEP 02</span></div>
+                <strong>Listen to the Sound</strong>
+                <small>Hear the sound while the system captures the recording.</small>
+            </div>
+            <div class="col-md-3 step-item">
+                <div><span class="step-icon"><i class="fa-solid fa-brain"></i></span><span class="step-number">STEP 03</span></div>
+                <strong>AI Analyses</strong>
+                <small>Acoustic features are processed by the AI classification model.</small>
+            </div>
+            <div class="col-md-3 step-item">
+                <div><span class="step-icon"><i class="fa-solid fa-chart-simple"></i></span><span class="step-number">STEP 04</span></div>
+                <strong>Result Revealed</strong>
+                <small>The predicted sound class and confidence are displayed.</small>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <div class="row g-4">
+        <!-- LEFT COLUMN -->
+        <div class="col-lg-5">
+            <div class="card p-4">
+                <div class="signal-header">
+                    <div class="section-title">
+                        <span class="section-icon"><i class="fa-solid fa-wave-square"></i></span>
+                        Live Sound Signal
+                    </div>
+                    <span class="signal-status">
+                        <span id="signalDot" class="mini-dot"></span>
+                        <span id="signalStatusText">MIC / AUDIO</span>
+                    </span>
+                </div>
+                <p class="section-description">Real-time acoustic signal captured from the recording microphone.</p>
+                
+                <!-- WAVEFORM / AMPLITUDE OVER TIME -->
+                <div class="visualizer-wrapper">
+                    <div class="visualizer-title">
+                        <span>Amplitude over time</span>
+                        <span id="waveLiveStatus" class="visualizer-live" style="display:none;">
+                            <span class="visualizer-live-dot"></span> Live
+                        </span>
+                    </div>
+                    <canvas id="waveform-canvas"></canvas>
+                    <div style="display: flex; justify-content: space-between; color: var(--text-light); font-size: 0.78rem; font-weight: 600; margin-top: 6px;">
+                        <span>0:00</span>
+                        <span>Time →</span>
+                        <span>0:05</span>
+                    </div>
+                </div>
+
+                <!-- SPECTROGRAM -->
+                <div class="visualizer-wrapper mt-4">
+                    <div class="visualizer-title">
+                        <span>Spectrogram</span>
+                        <span id="spectLiveStatus" class="visualizer-live" style="display:none;">
+                            <span class="visualizer-live-dot"></span> Live
+                        </span>
+                    </div>
+                    <canvas id="spectrogram-canvas"></canvas>
+                    <div class="spectrogram-legend">
+                        <span>Low frequency ↑ High frequency</span>
+                        <span>Time →</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CONTROL CENTER -->
+            <div class="card p-4 control-card">
+                <div class="control-info">
+                    <div class="control-icon"><i class="fa-solid fa-microphone-lines"></i></div>
+                    <div>
+                        <div class="section-title">Sound Test</div>
+                    </div>
+                </div>
+                <button id="playBtn" class="btn btn-success w-100 mt-2">
+                    <i class="fa-solid fa-play me-2"></i> Play Sound &amp; Test
+                </button>
+            </div>
+        </div>
+
+        <!-- RIGHT COLUMN -->
+        <div class="col-lg-7">
+            <!-- AI PREDICTION -->
+            <div class="card p-4">
+                <div class="ai-header">
+                    <div class="section-title">
+                        <span class="section-icon"><i class="fa-solid fa-brain"></i></span>
+                        Live AI Prediction
+                    </div>
+                </div>
+                <p class="section-description">AI analysis of the recorded horse sound running on edge hardware.</p>
+                <div class="ai-display-box">
+                    <small id="actionStatus" class="text-uppercase fw-bold">SYSTEM READY</small>
+                    <h1 id="predictionText">WAITING FOR SOUND...</h1>
+                    <div class="confidence-badge">
+                        <i class="fa-solid fa-brain me-1"></i>
+                        <span id="confidenceText">0%</span> confidence
+                    </div>
+                </div>
+            </div>
+
+            <!-- PROBABILITIES -->
+            <div class="card p-4">
+                <div class="section-title mb-1">
+                    <span class="section-icon"><i class="fa-solid fa-chart-column"></i></span>
+                    Model Probabilities
+                </div>
+                <p class="section-description">Confidence distribution across the detected horse sound classes.</p>
+                
+                <!-- AI ANALYSIS ANIMATION -->
+                <div id="predictionLoading" class="prediction-loading">
+                    <div class="analysis-title">AI ANALYSING SOUND</div>
+                    <div class="analysis-pulse">
+                        <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+                    </div>
+                    <div class="analysis-scan"></div>
+                    <div id="analysisMessage" class="analysis-message">Listening to the horse sound...</div>
+                    <div id="analysisCount" class="analysis-count">10 seconds remaining</div>
+                </div>
+
+                <!-- FINAL PROBABILITY RESULTS -->
+                <div id="probabilityResults" class="probability-results">
+                    <div class="probability-row">
+                        <div class="probability-label">
+                            <span><i class="fa-solid fa-droplet me-2 text-success"></i> Drinking</span>
+                            <span id="value-drinking" class="probability-value">0%</span>
+                        </div>
+                        <div class="progress"><div id="bar-drinking" class="progress-bar" style="width:0%"></div></div>
+                    </div>
+                    <div class="probability-row">
+                        <div class="probability-label">
+                            <span><i class="fa-solid fa-leaf me-2 text-success"></i> Eating</span>
+                            <span id="value-eating" class="probability-value">0%</span>
+                        </div>
+                        <div class="progress"><div id="bar-eating" class="progress-bar" style="width:0%"></div></div>
+                    </div>
+                    <div class="probability-row">
+                        <div class="probability-label">
+                            <span><i class="fa-solid fa-horse-head me-2 text-success"></i> Neigh</span>
+                            <span id="value-neigh" class="probability-value">0%</span>
+                        </div>
+                        <div class="progress"><div id="bar-neigh" class="progress-bar" style="width:0%"></div></div>
+                    </div>
+                    <div class="probability-row">
+                        <div class="probability-label">
+                            <span><i class="fa-solid fa-shoe-prints me-2 text-success"></i> Horse Kick</span>
+                            <span id="value-horse_kick" class="probability-value">0%</span>
+                        </div>
+                        <div class="progress"><div id="bar-horse_kick" class="progress-bar" style="width:0%"></div></div>
+                    </div>
+                    <div class="probability-row">
+                        <div class="probability-label">
+                            <span><i class="fa-solid fa-bell me-2 text-success"></i> Rattle</span>
+                            <span id="value-rattle" class="probability-value">0%</span>
+                        </div>
+                        <div class="progress"><div id="bar-rattle" class="progress-bar" style="width:0%"></div></div>
+                    </div>
+                    <div class="probability-row">
+                        <div class="probability-label">
+                            <span><i class="fa-solid fa-wind me-2 text-success"></i> Snort</span>
+                            <span id="value-snort" class="probability-value">0%</span>
+                        </div>
+                        <div class="progress"><div id="bar-snort" class="progress-bar" style="width:0%"></div></div>
+                    </div>
+                    <div class="probability-row mb-0">
+                        <div class="probability-label">
+                            <span><i class="fa-solid fa-volume-high me-2 text-success"></i> Nicker</span>
+                            <span id="value-nicker" class="probability-value">0%</span>
+                        </div>
+                        <div class="progress"><div id="bar-nicker" class="progress-bar" style="width:0%"></div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- FOOTER -->
+    <footer>
+        <div class="footer-content">
+            <div class="footer-main">
+                <div class="footer-project">
+                    <div class="footer-project-title">Tekoälyä <span>Talleille</span></div>
+                    <p class="footer-description">AI for Horse Welfare • Interactive Acoustic Monitoring Demonstrator</p>
+                    <div class="footer-technologies">
+                        <span class="technology-pill">Raspberry Pi</span>
+                        <span class="technology-pill">Audio AI</span>
+                        <span class="technology-pill">Acoustic Analysis</span>
+                        <span class="technology-pill">Real-Time Monitoring</span>
+                    </div>
+                </div>
+                <div class="footer-partners">
+                    <div class="partners-title">Project Partners</div>
+                    <div class="footer-logos">
+                        <div class="footer-logo-item"><img src="{{ url_for('static', filename='images/hevostietokeskus_logo.png') }}" alt="Hevostietokeskus"></div>
+                        <div class="footer-logo-item"><img src="{{ url_for('static', filename='images/savonia_logo.jpg') }}" alt="Savonia University of Applied Sciences"></div>
+                        <div class="footer-logo-item"><img src="{{ url_for('static', filename='images/ely-keskus-logo.jpg') }}" alt="ELY-keskus"></div>
+                        <div class="footer-logo-item"><img src="{{ url_for('static', filename='images/eu_logo.png') }}" alt="European Union"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <span>Edge AI Acoustic Monitoring System for Equine Welfare</span>
+                <span>Tekoälyä Talleille • 2026</span>
+            </div>
+        </div>
+    </footer>
+</div>
+
+<!-- JAVASCRIPT -->
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

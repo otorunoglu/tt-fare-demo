@@ -1,0 +1,9 @@
+{
+  "stall_id": "stall05",
+  "stable_id": "stable01",
+  "soundscape_classifier_config": {
+    "kick_prop_threshold": null,
+    "default_threshold": 0.9,
+    "thresholds": {}
+  }
+}

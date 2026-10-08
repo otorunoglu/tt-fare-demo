@@ -1,0 +1,23 @@
+### Get inference status
+
+GET https://{{hostname}}/api/inference/status HTTP/1.1
+
+### Trigger edge-monitor update
+
+POST https://{{hostname}}/api/admin/update HTTP/1.1
+
+### Sync latest ONNX model archive from rclone
+
+POST https://{{hostname}}/api/admin/models/sync HTTP/1.1
+Content-Type: application/json
+
+{}
+
+### Sync explicit ONNX archive from rclone
+
+POST https://{{hostname}}/api/admin/models/sync HTTP/1.1
+Content-Type: application/json
+
+{
+	"zip_name": "champion_v42_onnx.zip"
+}

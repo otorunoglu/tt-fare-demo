@@ -1,0 +1,29 @@
+[package]
+name = "webserver"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Workspace dependencies
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+shared.workspace = true
+inference = { path = "../inference" }
+clap = { version = "4.5", features = ["derive", "env"] }
+ort = { version = "2.0.0-rc.11", features = ["copy-dylibs", "download-binaries", "ndarray"] }
+
+# Web Specific
+axum = "0.7"
+tower-http = { version = "0.5", features = ["cors"] }
+dotenvy = "0.15.7"
+
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+rustls = "0.23"
+toml_edit = "0.25.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+jsonwebtoken = "9"

@@ -1,0 +1,14 @@
+[Unit]
+Description=Stable Edge Webserver
+After=network.target
+
+[Service]
+User=edge-monitor
+WorkingDirectory=/home/edge-monitor/equine-ai-monitor/apps/edge-monitor
+ExecStart=/home/edge-monitor/equine-ai-monitor/target/release/webserver
+Restart=always
+RestartSec=5
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target

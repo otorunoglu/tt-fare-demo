@@ -1,0 +1,52 @@
+[general]
+auto_pull_new_tasks = true
+pull_time_hour = "7"
+pull_time_minute = "0"
+
+[stable_mappings]
+stable01 = "rauhalahti stable"
+stable02 = "helsinki clinic"
+stable03 = "rauhalahti stable (ponies)"
+
+[stable_configs.stable01]
+auto_import_tasks = true
+
+[stable_configs.stable01.stall_mappings]
+stall01 = "Stall 01"
+stall02 = "Stall 02"
+stall03 = "Stall 03"
+stall04 = "Stall 04"
+stall05 = "Stall 05"
+stall06 = "Stall 06"
+stall07 = "Stall 07"
+
+[stable_configs.stable01.horse_mappings]
+horse01 = "Cromi"
+horse02 = "Kingo"
+horse03 = "Masi"
+horse04 = "Arttu"
+horse05 = "Rommi"
+horse06 = "Ara"
+horse07 = "Eelis"
+
+[stable_configs.stable02]
+auto_import_tasks = false
+
+[stable_configs.stable02.stall_mappings]
+stall01 = "Stall 01"
+stall02 = "Stall 02"
+
+[stable_configs.stable03]
+auto_import_tasks = true
+
+[stable_configs.stable03.stall_mappings]
+stall01 = "Stall 01"
+stall02 = "Stall 02"
+stall03 = "Stall 03"
+stall04 = "Stall 04"
+
+[stable_configs.stable03.horse_mappings]
+horse01 = "Apassi"
+horse02 = "Leevi"
+horse03 = "Kille"
+horse04 = "r. Tommy"

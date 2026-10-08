@@ -1,0 +1,20 @@
+{
+    "soundscape_classifier": {
+        "default_threshold": 0.85,
+        "thresholds": {
+            "horse_kick": 0.90,
+            "walking": 0.7,
+            "other_impact": 0.85,
+            "neigh": 0.6,
+            "rolling": 0.8
+        }
+    },
+    "anomaly_detector": {
+        "anomaly_threshold": 0.5,
+        "latent_dim": 128,
+        "n_mels": 64,
+        "fixed_tbins": 96,
+        "mel_mean": 0.0,
+        "mel_std": 1.0
+    }
+}

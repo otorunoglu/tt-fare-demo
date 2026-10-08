@@ -1,0 +1,51 @@
+# Edge Monitor Configuration
+# NOTE: Paths for models, database, and certs are handled by environment variables (.env)
+
+# Turn on or off inference logging in console
+inference_logging = false
+
+# Audio Processing Settings
+[audio]
+# Resampler Type (only used for non-integer sample rate ratios):
+#   "sinc"   - Rubato FFT sinc interpolation. High fidelity, CPU intensive.
+#   "linear" - Simple box filter/averaging. Fast, lower quality.
+#
+# For integer downsampling ratios (e.g. 48kHz -> 16kHz = 3:1), a FIR decimation
+# filter is automatically used instead. This matches ffmpeg's SWResample behavior
+# (Kaiser-windowed sinc, 16 taps/phase, 0.97 cutoff) and is highly CPU-efficient.
+resampler_type = "sinc"
+
+[notification]
+# Set enabled = true and configure SERVICE_ACCOUNT_KEY / FCM_TOPIC env vars to activate push.
+enabled = true
+severity_threshold = 1.0
+
+[notification.inactivity_alert]
+# Fire a push notification if the horse shows too little activity overnight.
+enabled = true
+# Local time (HH:MM, 24-hour) at which to run the check each morning.
+alert_time = "08:00"
+# Labels whose detections are summed to determine activity level.
+labels = ["eating", "drinking", "snoring"]
+# Alert fires when total detections across all labels is below this value.
+min_detections = 10
+# How many hours back from alert_time to examine (e.g. 12 → 20:00 previous evening to 08:00).
+look_back_hours = 24
+
+[recording]
+# Save a rolling audio window to disk whenever a qualifying warning fires.
+# The clip contains `pre_seconds` of audio before the warning plus `post_seconds` after,
+# written as a 16-bit PCM WAV file into `output_dir`.
+enabled = true
+# Directory for saved clips (created automatically). Relative to the working directory.
+output_dir = "data/alert_clips"
+# Seconds of audio kept before the triggering warning.
+pre_seconds = 30.0
+# Seconds of audio captured after the triggering warning.
+post_seconds = 10.0
+# Only save a clip when the warning's severity is at least this value.
+severity_threshold = 5.0
+# Retention: keep at most this many clips (oldest deleted first). 0 = unlimited.
+max_clips = 200
+# Retention: delete clips older than this many days. 0 = never delete by age.
+max_age_days = 0.0

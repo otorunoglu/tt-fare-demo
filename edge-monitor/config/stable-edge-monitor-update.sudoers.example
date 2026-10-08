@@ -1,0 +1,5 @@
+# Allow the service user to start the updater unit without a password.
+edge-monitor ALL=(root) NOPASSWD: /bin/systemctl start stable-edge-monitor-update.service
+
+# Allow the updater script to restart only the webserver unit without a password.
+edge-monitor ALL=(root) NOPASSWD: /bin/systemctl restart stable-edge-monitor-webserver.service

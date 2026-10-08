@@ -1,0 +1,211 @@
+import os
+import time
+from datetime import datetime
+import subprocess
+from pathlib import Path
+from gpiozero import Button
+from flask import Flask, render_template, jsonify
+import numpy as np
+import sounddevice as sd
+import soundfile as sf
+from mic_benchmark import mic_benchmark as mb
+
+SAMPLE_RATE = 16000
+DURATION = 5
+
+app = Flask(__name__)
+
+# Define GPIO Pins for the 4 buttons
+button_eating = Button(17, pull_up=True)
+button_walking = Button(27, pull_up=True)
+button_neigh = Button(22, pull_up=True)
+button_coughing = Button(23, pull_up=True)
+
+# Create folders if not exist
+os.makedirs("sounds", exist_ok=True)
+os.makedirs("recordings", exist_ok=True)
+
+# Load Benchmark Config and ONNX Models for Real Inference
+repo_root = Path(__file__).parent
+config_path = repo_root / "mic_benchmark" / "benchmark_config.toml"
+cfg = mb.load_benchmark_config(config_path, repo_root)
+
+embedder_path = cfg["embedder"]
+classifier_path = cfg["classifier"]
+label_mapping_path = cfg["label_mapping"]
+model_config_path = cfg["model_config"]
+
+sample_rate = int(cfg["sample_rate"])
+segment_duration = float(cfg["segment_duration"])
+segment_overlap = float(cfg["segment_overlap"])
+silence_threshold, classifier_threshold = mb.parse_model_config(model_config_path)
+label_map = mb.load_label_mapping(label_mapping_path)
+
+mb.require_runtime_dependencies()
+
+print("Loading ONNX sessions for real champion model...")
+embedder_sess = mb.ort.InferenceSession(str(embedder_path), providers=["CPUExecutionProvider"])
+classifier_sess = mb.ort.InferenceSession(str(classifier_path), providers=["CPUExecutionProvider"])
+emb_in_name = embedder_sess.get_inputs()[0].name
+cls_in_name = classifier_sess.get_inputs()[0].name
+
+# Store the latest status to show on the web page
+latest_status = {
+    "action": "System Ready",
+    "timestamp": "-",
+    "filename": "-",
+    "prediction": "Waiting for sound...",
+    "confidence": "0%",
+    "probabilities": {
+        "eating": 0,
+        "walking": 0,
+        "vocalisation": 0,
+        "cough": 0
+    }
+}
+
+def get_device_indices():
+    """ස්වයංක්‍රීයව නමෙන් Røde මයික් එක සහ ස්පීකර් ඩිවයිස් අංක සොයා ගැනීම"""
+    devices = sd.query_devices()
+    mic_idx = None
+    jabra_idx = None
+    headset_idx = None
+
+    for i, dev in enumerate(devices):
+        name = dev['name']
+        if "RØDE VideoMic GO II" in name and dev['max_input_channels'] > 0:
+            mic_idx = i
+        if "Jabra SPEAK 510" in name and dev['max_output_channels'] > 0:
+            jabra_idx = i
+        if "Lenovo USB Headset" in name and dev['max_output_channels'] > 0:
+            headset_idx = i
+
+    return mic_idx, jabra_idx, headset_idx
+
+def run_real_ai_model(audio_file_path):
+    """Run real champion model inference on the recorded audio file and return probabilities."""
+    audio_file = Path(audio_file_path)
+    if not audio_file.exists():
+        return "Error: Audio file not found", {}
+
+    try:
+        audio, sr = mb.audio_preprocessing.load_audio(str(audio_file), sample_rate)
+        audio = np.asarray(audio, dtype=np.float32)
+
+        segment_samples = int(sample_rate * segment_duration)
+        hop_samples = int(segment_samples * (1.0 - segment_overlap))
+
+        if audio.size < segment_samples:
+            return "Audio too short for inference", {}
+
+        best_label = "unknown"
+        highest_conf = 0.0
+        best_probs = {}
+
+        for start in range(0, audio.size - segment_samples + 1, hop_samples):
+            segment = audio[start:start + segment_samples]
+            dbfs = mb.loudness_dbfs(segment)
+            if dbfs < silence_threshold:
+                continue
+
+            audio_vec = np.clip(segment.astype(np.float32), -1.0, 1.0)
+            emb = embedder_sess.run(None, {emb_in_name: audio_vec.reshape(1, -1)})
+            embedding = np.asarray(emb[0], dtype=np.float32)
+            cls = classifier_sess.run(None, {cls_in_name: embedding})
+            probs = np.asarray(cls[0], dtype=np.float32).reshape(-1)
+
+            label_probs, top_label, top_prob = mb.choose_top_label(probs, label_map)
+            if top_prob > highest_conf:
+                highest_conf = top_prob
+                best_label = top_label
+                best_probs = {k: float(v * 100) for k, v in label_probs.items()}
+
+        if highest_conf < classifier_threshold:
+            return f"Unsure / Silence (Conf: {highest_conf:.2f})", {}
+
+        result_str = f"{best_label.upper()} ({highest_conf * 100:.1f}% confidence)"
+        return result_str, best_probs
+
+    except Exception as e:
+        print(f"Inference error: {e}")
+        return f"Error: {str(e)}", {}
+
+def play_and_record(sound_name, filename_prefix):
+    global latest_status
+    sound_path = f"sounds/{sound_name}.wav"
+
+    if not os.path.exists(sound_path):
+        print(f"Error: {sound_path} not found!")
+        return
+
+    print(f"\n--- Button Pressed: {filename_prefix.upper()} ---")
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    rec_filename = f"recordings/{timestamp}_{filename_prefix}.wav"
+
+    # Update status to recording
+    latest_status = {
+        "action": filename_prefix.upper(),
+        "timestamp": timestamp,
+        "filename": f"{timestamp}_{filename_prefix}.wav",
+        "prediction": "Recording & Running Real AI Model...",
+        "confidence": "0%",
+        "probabilities": {"eating": 0, "walking": 0, "vocalisation": 0, "cough": 0}
+    }
+
+    mic_idx, jabra_idx, headset_idx = get_device_indices()
+
+    print("Recording microphone at 16kHz...")
+    recording = sd.rec(int(DURATION * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1)
+
+    players = []
+    if jabra_idx is not None:
+        players.append(subprocess.Popen(["aplay", "-D", "plughw:2", sound_path]))
+    if headset_idx is not None:
+        players.append(subprocess.Popen(["aplay", "-D", "plughw:3", sound_path]))
+
+    sd.wait()
+
+    for player in players:
+        player.terminate()
+
+    sf.write(rec_filename, recording, SAMPLE_RATE)
+    print(f"Recording saved to {rec_filename}")
+
+    # Run REAL Champion AI Model prediction on the saved recording
+    ai_result, ai_probs = run_real_ai_model(rec_filename)
+
+    clean_pred = ai_result.split(" (")[0] if "(" in ai_result else ai_result
+    conf_val = ai_result.split("(")[1].replace(")", "") if "(" in ai_result else "0%"
+
+    latest_status = {
+        "action": filename_prefix.upper(),
+        "timestamp": timestamp,
+        "filename": f"{timestamp}_{filename_prefix}.wav",
+        "prediction": clean_pred,
+        "confidence": conf_val,
+        "probabilities": {
+            "eating": round(ai_probs.get("eating", ai_probs.get("normal", 0)), 1),
+            "walking": round(ai_probs.get("walking", 0), 1),
+            "vocalisation": round(ai_probs.get("vocalisation", ai_probs.get("neigh", 0)), 1),
+            "cough": round(ai_probs.get("cough", ai_probs.get("coughing", 0)), 1)
+        }
+    }
+    print(f"Real AI Prediction: {ai_result}")
+
+# Assign button actions correctly (Fixed typo here)
+button_eating.when_pressed = lambda: play_and_record("eating", "eating")
+button_walking.when_pressed = lambda: play_and_record("walking", "walking")
+button_neigh.when_pressed = lambda: play_and_record("neigh", "neigh")
+button_coughing.when_pressed = lambda: play_and_record("coughing", "coughing")
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/status')
+def status():
+    return jsonify(latest_status)
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=False)

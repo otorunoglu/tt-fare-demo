@@ -1,0 +1,33 @@
+[package]
+name = "inference"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Workspace dependencies
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yml.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+toml.workspace = true
+shared.workspace = true
+audio_preprocessing.workspace = true
+
+# Specific to inference
+clap = { version = "4.5", features = ["derive", "env"] }
+cpal = "0.15"
+symphonia = { version = "0.5", features = ["all"] }
+crossbeam-channel = "0.5"
+ctrlc = "3.4"
+ndarray = "0.17"
+ort = { version = "=2.0.0-rc.11", features = ["copy-dylibs", "download-binaries", "ndarray"] }
+rubato = "0.14.1"
+hound = "3.5"
+base64 = "0.22.1"
+uuid = { version = "1.20.0", features = ["v4"] }
+dotenvy = "0.15.7"
+# We will transition to sqlx via shared, but keep dependencies cleaned up

@@ -1,0 +1,11 @@
+librosa
+matplotlib
+numpy
+scikit_learn
+soundfile
+torch
+tensorflow
+sounddevice
+panns-inference
+scikit-image
+pydantic

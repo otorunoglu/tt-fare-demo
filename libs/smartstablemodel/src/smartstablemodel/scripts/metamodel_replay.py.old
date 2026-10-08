@@ -1,0 +1,1057 @@
+import gzip
+import json
+import csv
+from pathlib import Path
+from datetime import datetime, timedelta
+from typing import Iterator, Any, List, Optional
+import math
+import matplotlib.pyplot as plt
+import numpy as np
+from collections import defaultdict, Counter
+
+from smartstablemodel.metamodel_rules import ContextualMetaModelEvaluator, LABEL_GROUPS, WarningType
+
+
+SCRIPT_PATH = Path(__file__).resolve().parent
+
+SIMULATE_REALTIME = False # if True it will do one event at a time (which is way slower!)
+
+MULTI_DAY_ENABLED = True
+MULTI_DAY_BIN_SECONDS = 300 # 5‑minute bins by default
+MULTI_DAY_TICK_MIN = 60     # tick every 60 minutes
+MULTI_DAY_TARGET_MAX_BINS = 360  # cap bins to keep plots responsive
+INPUT_FILES: List[Path] = [
+    # SCRIPT_PATH.parent / "smart-stable-logs" / "segments" / "artificial" / "stable01_2025-08-28_multi_injected.jsonl",
+    # SCRIPT_PATH.parent / "smart-stable-logs" / "segments" / "artificial" / "20_oclock_of_28th.jsonl",
+    # SCRIPT_PATH.parent / "smart-stable-logs" / "segments" / "artificial" / "synthetic_critical_scream.jsonl",
+    # SCRIPT_PATH.parent / "smart-stable-logs" / "segments" / "artificial" / "synthetic_sustained_loudness.jsonl",
+    # SCRIPT_PATH.parent / "smart-stable-logs" / "segments" / "artificial" / "short_of_28.jsonl",
+    # SCRIPT_PATH.parent / "smart-stable-logs" / "segments" / "stable01" / "2025-08-20.jsonl",
+    # SCRIPT_PATH.parent / "smart-stable-logs" / "segments" / "stable01" / "2025-08-21.jsonl",
+    # SCRIPT_PATH.parent / "smart-stable-logs" / "segments" / "stable01" / "2025-08-28.jsonl",
+    # SCRIPT_PATH.parent / "smart-stable-logs" / "segments" / "stable01" / "2025-08-27.csv",
+    SCRIPT_PATH.parent / "smart-stable-logs" / "segments" / "stable01" / "2025-08-28.csv",
+    SCRIPT_PATH.parent / "smart-stable-logs" / "segments" / "stable01" / "2025-08-29.csv",
+    SCRIPT_PATH.parent / "smart-stable-logs" / "segments" / "stable01" / "2025-08-30.csv",
+]
+
+def _to_float(x: Any) -> Optional[float]:
+    try:
+        return float(x) if x not in (None, "") else None
+    except Exception:
+        return None
+
+def _row_to_event(row: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """
+    CSV -> evaluator event with dominant_label fields.
+    Accepts timestamps like 'YYYY-mm-dd HH:MM:SS' or 'YYYY-mm-ddTHH:MM:SS'.
+    """
+    ts = row.get("timestamp")
+    if not ts:
+        return None
+    ev: dict[str, Any] = {"timestamp": ts}
+    dom = row.get("dominant_label")
+    if dom:
+        ev["dominant_label"] = dom
+    conf = _to_float(row.get("dominant_label_confidence"))
+    if conf is not None:
+        ev["dominant_label_confidence"] = conf
+    loud = _to_float(row.get("loudness"))
+    if loud is not None:
+        ev["loudness"] = loud
+    return ev
+
+def iter_events(path: Path) -> Iterator[dict[str, Any]]:
+    # Support both .jsonl and .csv (assumes JSONL if not .csv)
+    if path.suffix == ".csv":
+        with open(path, "r", newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                ev = _row_to_event(row)
+                if ev is not None:
+                    yield ev
+        return
+    else:
+        opener = gzip.open if path.suffix == ".gz" else open
+        with opener(path, "rt") as f:  # type: ignore[arg-type]
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except Exception:  # ignore malformed lines
+                    continue
+
+
+
+def plot_grouped_events(evaluator: ContextualMetaModelEvaluator,
+                        bin_seconds: int = 120,
+                        tick_minutes: int = 15,
+                        top_n_labels: int = 20,
+                        min_total_seconds: float = 2.0,
+                        limit_bins: int = 1000,
+                        time_format: str = "%H:%M",
+                        max_cell_seconds: float | None = 30.0,
+                        group_labels: bool = True,
+                        overlay_warnings: bool = True):
+    """
+    Heatmap (labels or groups). If overlay_warnings=True, draw vertical lines for warnings.
+    """
+    import matplotlib.colors as mcolors
+    from collections import defaultdict
+
+    groups = evaluator.grouped_events
+    if not groups:
+        print("No grouped events.")
+        return
+
+    parsed = []
+    for g in groups:
+        try:
+            s = datetime.fromisoformat(g["timestamp"])
+            e = datetime.fromisoformat(g.get("timestamp_end", g["timestamp"]))
+        except Exception:
+            continue
+        if e <= s:
+            continue
+        lab = g.get("label")
+        if not lab:
+            continue
+        parsed.append((lab, s, e))
+    if not parsed:
+        print("No valid grouped events.")
+        return
+
+    parsed.sort(key=lambda x: x[1])
+    t0 = parsed[0][1]
+    t_end = max(e for _, _, e in parsed)
+
+    total_span = (t_end - t0).total_seconds()
+    est_bins = int(np.ceil(total_span / bin_seconds))
+    if est_bins > limit_bins:
+        factor = int(np.ceil(est_bins / limit_bins))
+        bin_seconds *= factor
+        est_bins = int(np.ceil(total_span / bin_seconds))
+        print(f"[plot_grouped_events] Increased bin size to {bin_seconds}s to keep bins <= {limit_bins}")
+    num_bins = max(1, est_bins)
+
+    def bin_index(ts: datetime) -> int:
+        return int((ts - t0).total_seconds() // bin_seconds)
+
+    # reverse index
+    label_to_groups = {}
+    for gname, members in LABEL_GROUPS.items():
+        for m in members:
+            label_to_groups.setdefault(m, set()).add(gname)
+
+    # Predefine display_labels so it is always bound (used only when group_labels is False)
+    display_labels: list[str] = []
+
+    if group_labels:
+        # (existing group mode code unchanged)
+        groups = evaluator.grouped_events
+        if not groups:
+            print("No grouped events.")
+            return
+
+        parsed = []
+        for g in groups:
+            try:
+                s = datetime.fromisoformat(g["timestamp"])
+                e = datetime.fromisoformat(g.get("timestamp_end", g["timestamp"]))
+            except Exception:
+                continue
+            if e <= s:
+                continue
+            lab = g.get("label")
+            if not lab:
+                continue
+            parsed.append((lab, s, e))
+        if not parsed:
+            print("No valid grouped events.")
+            return
+
+        parsed.sort(key=lambda x: x[1])
+        t0 = parsed[0][1]
+        t_end = max(e for _, _, e in parsed)
+
+        total_span = (t_end - t0).total_seconds()
+        est_bins = int(np.ceil(total_span / bin_seconds))
+        if est_bins > limit_bins:
+            factor = int(np.ceil(est_bins / limit_bins))
+            bin_seconds *= factor
+            est_bins = int(np.ceil(total_span / bin_seconds))
+            print(f"[plot_grouped_events] Increased bin size to {bin_seconds}s to keep bins <= {limit_bins}")
+        num_bins = max(1, est_bins)
+
+        def bin_index(ts: datetime) -> int:
+            return int((ts - t0).total_seconds() // bin_seconds)
+
+        label_to_groups = {}
+        for gname, members in LABEL_GROUPS.items():
+            for m in members:
+                label_to_groups.setdefault(m, set()).add(gname)
+        group_bin_seconds: dict[tuple[str, int], set[int]] = {}
+        for lab, s, e in parsed:
+            target = label_to_groups.get(lab)
+            if not target:
+                continue
+            start_sec = int(s.timestamp())
+            end_sec = int(e.timestamp())
+            for sec in range(start_sec, end_sec):
+                b = (sec - int(t0.timestamp())) // bin_seconds
+                if b < 0 or b >= num_bins:
+                    continue
+                for gname in target:
+                    key = (gname, b)
+                    group_bin_seconds.setdefault(key, set()).add(sec)
+        group_totals = defaultdict(float)
+        for (gname, b), secset in group_bin_seconds.items():
+            group_totals[gname] += len(secset)
+        labels = [g for g, tot in group_totals.items() if tot >= min_total_seconds]
+        labels.sort(key=lambda g: -group_totals[g])
+        if top_n_labels and len(labels) > top_n_labels:
+            labels = labels[:top_n_labels]
+        if not labels:
+            print("No groups pass filtering.")
+            return
+        label_idx = {g: i for i, g in enumerate(labels)}
+        mat = np.zeros((len(labels), num_bins), dtype=float)
+        for (gname, b), secset in group_bin_seconds.items():
+            if gname in label_idx and 0 <= b < num_bins:
+                mat[label_idx[gname], b] += len(secset)
+        y_axis_label = "Group"
+        title = "Group duration heatmap"
+    else:
+        duration = defaultdict(float)
+        for lab, s, e in parsed:
+            start_bin = bin_index(s)
+            end_bin = bin_index(e - timedelta(microseconds=1))
+            cursor = s
+            for b in range(start_bin, end_bin + 1):
+                b_start = t0 + timedelta(seconds=b * bin_seconds)
+                b_end = b_start + timedelta(seconds=bin_seconds)
+                seg_end = min(e, b_end)
+                seg_dur = (seg_end - cursor).total_seconds()
+                if seg_dur > 0:
+                    duration[(lab, b)] += seg_dur
+                    cursor = seg_end
+                    if cursor >= e:
+                        break
+        total_per_label = defaultdict(float)
+        for (lab, b), val in duration.items():
+            total_per_label[lab] += val
+        labels = [lab for lab, tot in total_per_label.items() if tot >= min_total_seconds]
+        labels.sort(key=lambda l: -total_per_label[l])
+        if top_n_labels and len(labels) > top_n_labels:
+            labels = labels[:top_n_labels]
+        if not labels:
+            print("No labels pass filtering.")
+            return
+        label_idx = {lab: i for i, lab in enumerate(labels)}
+        mat = np.zeros((len(labels), num_bins), dtype=float)
+        for (lab, b), val in duration.items():
+            if lab in label_idx and 0 <= b < num_bins:
+                mat[label_idx[lab], b] += val
+        # build display labels with group memberships
+        display_labels = []
+        for lab in labels:
+            groups = sorted(label_to_groups.get(lab, []))
+            if groups:
+                display_labels.append(f"{lab} ({', '.join(groups)})")
+            else:
+                display_labels.append(f"{lab} (ungrouped)")
+        y_axis_label = "Label"
+        title = "Label duration heatmap"
+
+    # Plot
+    fig_h = max(4, 0.45 * (len(labels)) + 1.2)
+    fig_w = min(22, 1.0 + 0.14 * num_bins)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+
+    if max_cell_seconds is not None and max_cell_seconds > 0:
+        norm = mcolors.Normalize(vmin=0, vmax=max_cell_seconds, clip=False)
+        cmap = plt.get_cmap("magma")
+        im = ax.imshow(mat, aspect='auto', interpolation='nearest', cmap=cmap, norm=norm)
+        cbar = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.02, extend='max')
+        cbar.set_label("Seconds (capped)")
+    else:
+        im = ax.imshow(mat, aspect='auto', interpolation='nearest', cmap='magma')
+        cbar = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.02)
+        cbar.set_label("Seconds")
+
+    # X ticks
+    tick_seconds = tick_minutes * 60
+    tick_positions = []
+    tick_labels = []
+    cur = t0
+    while cur <= t_end:
+        b = int((cur - t0).total_seconds() // bin_seconds)
+        if 0 <= b < num_bins:
+            tick_positions.append(b)
+            tick_labels.append(cur.strftime(time_format))
+        cur += timedelta(seconds=tick_seconds)
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(tick_labels, rotation=45, ha='right')
+
+    ax.set_yticks(range(len(labels)))
+    # Use enriched names only in label mode
+    if group_labels:
+        ax.set_yticklabels(labels)
+    else:
+        ax.set_yticklabels(display_labels)
+    ax.set_xlabel(f"Time (bin={bin_seconds}s)")
+    ax.set_ylabel(y_axis_label)
+    ax.set_title(title)
+
+    # Overlay warnings
+    if overlay_warnings:
+        warn_colors = {
+            WarningType.ALERT: "#ff2d2d",
+            WarningType.CLUSTER: "#ffaa00",
+            WarningType.LOUDNESS: "#3399ff"
+        }
+        warnings = evaluator.nightly_warnings.get_warnings()
+        for w in warnings:
+            try:
+                w_ts = datetime.fromisoformat(w.timestamp)
+            except Exception:
+                continue
+            if not (t0 <= w_ts <= t_end):
+                continue
+            bx = bin_index(w_ts) + 0.5
+            ax.axvline(bx, color=warn_colors.get(w.warning_type, "#ffffff"),
+                       linestyle='-', linewidth=1.2, alpha=0.85)
+        # Legend patches
+        from matplotlib.lines import Line2D
+        legend_elems = [
+            Line2D([0], [0], color=c, lw=2, label=wt.value)
+            for wt, c in warn_colors.items()
+        ]
+        ax.legend(handles=legend_elems, loc='upper right', fontsize=8, frameon=False)
+
+    # Optional cell annotations
+    if len(labels) <= 15 and num_bins <= 160:
+        vmax = mat.max()
+        thresh = vmax * 0.55 if vmax > 0 else 0
+        for i in range(mat.shape[0]):
+            for j in range(mat.shape[1]):
+                v = mat[i, j]
+                if v <= 0:
+                    continue
+                if max_cell_seconds and v > max_cell_seconds:
+                    txt = f"{int(max_cell_seconds)}+"
+                    color = "black"
+                else:
+                    txt = f"{v:.0f}" if v >= 10 else f"{v:.1f}"
+                    color = "white" if v >= thresh else "black"
+                ax.text(j, i, txt, ha='center', va='center', fontsize=7, color=color)
+
+    plt.tight_layout()
+    plt.show()
+
+# --- Helper: quick debug summaries --------------------------------------
+def print_label_group_summary(evaluator: ContextualMetaModelEvaluator) -> None:
+    """Print duration summary per raw label and per group to diagnose anomalies."""
+    label_seconds = defaultdict(float)
+    for g in evaluator.grouped_events:
+        try:
+            s = datetime.fromisoformat(g["timestamp"])
+            e = datetime.fromisoformat(g.get("timestamp_end", g["timestamp"]))
+        except Exception:
+            continue
+        if e <= s:
+            continue
+        dur = (e - s).total_seconds()
+        lab = g.get("label")
+        label_seconds[lab] += dur
+    if not label_seconds:
+        print("[summary] No grouped events.")
+        return
+    total = sum(label_seconds.values())
+    print("\n[summary] Top labels by seconds:")
+    for lab, secs in sorted(label_seconds.items(), key=lambda x: -x[1])[:15]:
+        pct = 100 * secs / total if total else 0
+        print(f"  {lab:15s} {secs:7.1f}s  ({pct:5.1f}%)")
+
+    # Group aggregation (union approximation by adding; for precise union we’d replicate heatmap logic)
+    group_map = {lab: set() for lab in label_seconds}
+    for gname, members in LABEL_GROUPS.items():
+        for m in members:
+            if m in group_map:
+                group_map[m].add(gname)
+
+    group_seconds = defaultdict(float)
+    for lab, secs in label_seconds.items():
+        if not group_map[lab]:
+            group_seconds["(ungrouped)"] += secs
+        else:
+            # NOTE: if a label belongs to multiple groups we count it in each (same as current heatmap design)
+            for gname in group_map[lab]:
+                group_seconds[gname] += secs
+
+    print("\n[summary] Group seconds (label seconds summed; may double count overlaps):")
+    for gname, secs in sorted(group_seconds.items(), key=lambda x: -x[1]):
+        print(f"  {gname:15s} {secs:7.1f}s")
+
+    # Overlap diagnostics
+    overlaps = {lab: gs for lab, gs in group_map.items() if len(gs) > 1}
+    if overlaps:
+        print("\n[summary] Overlapping label -> groups (can inflate multiple groups simultaneously):")
+        for lab, gs in overlaps.items():
+            print(f"  {lab}: {', '.join(sorted(gs))}")
+    else:
+        print("\n[summary] No overlapping labels across groups.")
+
+
+def plot_night_overview(evaluator: ContextualMetaModelEvaluator,
+                        bin_seconds: int = 120,
+                        tick_minutes: int = 15,
+                        time_format: str = "%H:%M",
+                        max_cell_seconds: float | None = 30.0,
+                        min_group_seconds: float = 2.0,
+                        panels: tuple[str, ...] = ("warnings", "heatmap", "loudness", "stacked"),
+                        group_labels: bool = True,
+                        overlay_warnings: bool = True,
+                        group_sort_mode: str = "coverage",
+                        heatmap_debug: bool = False,  # NEW
+                        warnings_max_rows: int = 5,
+                        show_warning_labels: bool = True,
+                        warning_marker_scale: float = 55.0,
+                        warnings_merge_bins: int = 1,
+                        warnings_cluster_overflow: bool = True,
+                        warnings_time_cluster_seconds: int = 240,
+                        warnings_label_abbrev: bool = True,
+                        # --- NEW OPTIONAL WINDOW / ADAPTIVE PARAMS ---
+                        window_start: datetime | None = None,
+                        window_end: datetime | None = None,
+                        window_last_seconds: int | None = None,
+                        adapt_resolution: bool = True,
+                        target_max_bins: int = 180,
+                        
+                        ):
+    """
+    Multi‑panel night overview.
+
+            Panels (order respected):
+                warnings : compact lane panel (clustered + overflow aggregation to reduce clutter)
+                heatmap  : group (or label) duration heatmap
+                stacked  : stacked area (group fractions)
+                loudness : adaptive loudness window mean vs baseline
+
+            Overlap Mitigation (warnings panel):
+                - warnings_merge_bins: merge warnings whose bin indices differ by <= this value
+                - warnings_time_cluster_seconds: merge warnings whose timestamps are within this many seconds (applied before merge_bins)
+                - warnings_max_rows: number of stacked lanes; overflow aggregated into a '+N' marker if warnings_cluster_overflow=True
+                - warnings_label_abbrev: use shorter labels (type initial + label + sev) to save horizontal space
+
+    If overlay_warnings=True vertical lines (all panels) show ALERT / CLUSTER / LOUDNESS warnings.
+    """
+    from datetime import datetime, timedelta
+    from collections import defaultdict
+    from smartstablemodel.metamodel_rules import LABEL_GROUPS, WarningType
+
+    events = list(evaluator.events)
+    if not events:
+        print("No events; nothing to plot.")
+        return
+
+    def _parse_ts(ev: dict[str, Any]):
+        return datetime.fromisoformat(ev["timestamp"])
+
+    full_start = _parse_ts(events[0])
+    full_end = _parse_ts(events[-1])
+
+    # If window_last_seconds provided, override explicit start/end
+    if window_last_seconds is not None and window_last_seconds > 0:
+        window_end = full_end
+        window_start = full_end - timedelta(seconds=window_last_seconds)
+
+    # Default to full span if None
+    if window_start is None:
+        window_start = full_start
+    if window_end is None:
+        window_end = full_end
+
+    if window_start >= window_end:
+        print("Invalid window (start >= end); nothing to plot.")
+        return
+
+    # Filter events to window
+    events = [ev for ev in events if window_start <= _parse_ts(ev) <= window_end]
+    if not events:
+        print("No events inside requested window.")
+        return
+
+    t0 = window_start
+    t_end = window_end
+    total_span = (t_end - t0).total_seconds()
+    if total_span <= 0:
+        print("Span <= 0 after windowing.")
+        return
+
+    # Adaptive resolution for short / long spans
+    orig_bin = bin_seconds
+    if adapt_resolution:
+        # If span is short, shrink bin size to keep some temporal detail
+        if total_span < bin_seconds:
+            bin_seconds = max(1, int(max(1, total_span / 20)))  # aim ~20 bins
+        # Cap number of bins
+        approx_bins = max(1, math.ceil(total_span / bin_seconds))
+        if approx_bins > target_max_bins:
+            factor = math.ceil(approx_bins / target_max_bins)
+            bin_seconds *= factor
+        # For very short spans (<15 min) reduce tick spacing
+        if total_span < 900:  # <15 minutes
+            # choose about 8 ticks
+            tick_sec = max(10, int(total_span / 8))
+            # Round tick_sec to nearest 10s for cleanliness
+            tick_sec = int(round(tick_sec / 10) * 10)
+            # Only adjust tick_minutes if >= 60s; else we will emulate second ticks later
+            if tick_sec >= 60:
+                tick_minutes = max(1, tick_sec // 60)
+            else:
+                # use 0 to mark that we'll render second-based ticks
+                tick_minutes = 0
+        if heatmap_debug:
+            print(f"[plot_night_overview] adapt span={total_span:.1f}s bin_seconds {orig_bin}->{bin_seconds} approx_bins={math.ceil(total_span / bin_seconds)} tick_minutes={tick_minutes}")
+
+    num_bins = int(math.ceil(total_span / bin_seconds))
+    # Precompute bin start times
+    bin_start_times = [t0 + timedelta(seconds=i * bin_seconds) for i in range(num_bins)]
+    t0_epoch = int(t0.timestamp())
+
+    def bin_index(ts: datetime) -> int:
+        return min(num_bins - 1, max(0, int((ts - t0).total_seconds() // bin_seconds)))
+
+    # --------- Build grouped spans (reuse grouped_events) ---------------
+    grouped_spans = []
+    for g in evaluator.grouped_events:
+        try:
+            s = datetime.fromisoformat(g["timestamp"])
+            e = datetime.fromisoformat(g.get("timestamp_end", g["timestamp"]))
+        except Exception:
+            continue
+        if e <= s:
+            continue
+        lab = g.get("label")
+        if not lab:
+            continue
+        grouped_spans.append((lab, s, e))
+    grouped_spans.sort(key=lambda x: x[1])
+
+    # --------- Heatmap / Group aggregation ------------------------------
+    heat_labels = []
+    heat_mat = None
+    group_mode = group_labels
+
+    if "heatmap" in panels or "stacked" in panels:
+        if group_mode:
+            label_to_groups = {}
+            for gname, members in LABEL_GROUPS.items():
+                for m in members:
+                    label_to_groups.setdefault(m, []).append(gname)
+
+            group_bin_secs: dict[tuple[str, int], set[int]] = {}
+            for lab, s, e in grouped_spans:
+                targets = label_to_groups.get(lab)
+                if not targets:
+                    continue
+                start_sec = int(s.timestamp())
+                end_sec = int(e.timestamp())
+                for sec in range(start_sec, end_sec):
+                    b = (sec - t0_epoch) // bin_seconds
+                    if b < 0 or b >= num_bins:
+                        continue
+                    for gname in targets:
+                        key = (gname, b)
+                        group_bin_secs.setdefault(key, set()).add(sec)
+
+            group_totals = defaultdict(float)
+            for (gname, b), secset in group_bin_secs.items():
+                group_totals[gname] += len(secset)
+
+            # ORDER LOGIC PATCH
+            if group_sort_mode == "defined":
+                # preserve config order but include only present / above threshold
+                for gname in LABEL_GROUPS.keys():
+                    tot = group_totals.get(gname, 0.0)
+                    if tot >= min_group_seconds or tot > 0:
+                        heat_labels.append(gname)
+                if not heat_labels:
+                    heat_labels = list(LABEL_GROUPS.keys())
+            else:
+                heat_labels = [g for g, tot in group_totals.items()
+                               if tot >= min_group_seconds or tot > 0]
+                heat_labels.sort(key=lambda g: -group_totals[g])
+
+            if not heat_labels:
+                print("No groups to show.")
+                return
+
+            idx = {g: i for i, g in enumerate(heat_labels)}
+            heat_mat = np.zeros((len(heat_labels), num_bins), dtype=float)
+            for (gname, b), secset in group_bin_secs.items():
+                if gname in idx and 0 <= b < num_bins:
+                    heat_mat[idx[gname], b] += len(secset)
+        else:
+            # Per label mode
+            duration = defaultdict(float)
+            for lab, s, e in grouped_spans:
+                start_bin = bin_index(s)
+                end_bin = bin_index(e - timedelta(microseconds=1))
+                cursor = s
+                for b in range(start_bin, end_bin + 1):
+                    b_start = t0 + timedelta(seconds=b * bin_seconds)
+                    b_end = b_start + timedelta(seconds=bin_seconds)
+                    seg_end = min(e, b_end)
+                    seg_dur = (seg_end - cursor).total_seconds()
+                    if seg_dur > 0:
+                        duration[(lab, b)] += seg_dur
+                        cursor = seg_end
+                        if cursor >= e:
+                            break
+            label_tot = defaultdict(float)
+            for (lab, b), val in duration.items():
+                label_tot[lab] += val
+            heat_labels = [l for l, tot in label_tot.items() if tot >= min_group_seconds]
+            heat_labels.sort(key=lambda l: -label_tot[l])
+            idx = {l: i for i, l in enumerate(heat_labels)}
+            heat_mat = np.zeros((len(heat_labels), num_bins), dtype=float)
+            for (lab, b), val in duration.items():
+                if lab in idx and 0 <= b < num_bins:
+                    heat_mat[idx[lab], b] += val
+
+    # --------- Loudness per bin -----------------------------------------
+    loud_bin_vals = None
+    loud_bin_counts = None
+    loud_window_mean = None
+    baseline_mean = None
+    baseline_std = None
+    threshold_line = None
+    if "loudness" in panels:
+        # Per-second loudness (distinct seconds)
+        sec_loud: dict[int, float] = {}
+        for ev in events:
+            ts = _parse_ts(ev)
+            v = float(ev.get("loudness", None) or 0.0)
+            if v == 0.0:
+                v = ev.get("loudness_metrics", {}).get("segment", {}).get("value")
+            if isinstance(v, (int, float)):
+                sec = int(ts.timestamp())
+                # keep last (or average): we choose average if multiple in same sec
+                if sec in sec_loud:
+                    sec_loud[sec] = (sec_loud[sec] + float(v)) / 2.0
+                else:
+                    sec_loud[sec] = float(v)
+        loud_bin_vals = np.zeros(num_bins, dtype=float)
+        loud_bin_counts = np.zeros(num_bins, dtype=int)
+        for sec, val in sec_loud.items():
+            b = (sec - t0_epoch) // bin_seconds
+            if 0 <= b < num_bins:
+                loud_bin_vals[b] += val
+                loud_bin_counts[b] += 1
+        with np.errstate(divide='ignore', invalid='ignore'):
+            loud_window_mean = np.where(loud_bin_counts > 0,
+                                        loud_bin_vals / np.maximum(loud_bin_counts, 1),
+                                        np.nan)
+
+        # Baseline from evaluator adaptive stats
+        base_n = evaluator._loud_base_n
+        base_mean = evaluator._loud_base_mean
+        # std
+        if base_n > 1:
+            var = evaluator._loud_base_M2 / (base_n - 1)
+            base_std = math.sqrt(var) if var > 0 else 0.0
+        else:
+            base_std = 0.0
+        baseline_mean = base_mean
+        baseline_std = base_std
+        k = evaluator.loudness_sigma_multiplier if hasattr(evaluator, "loudness_sigma_multiplier") else 3.0
+        threshold_line = baseline_mean + k * baseline_std
+
+    # --------- Group stacked area (fractions) ----------------------------
+    stacked_mat = None
+    stacked_labels = heat_labels if group_mode else None
+    if "stacked" in panels and group_mode and heat_mat is not None:
+        col_sums = heat_mat.sum(axis=0)
+        stacked_mat = np.divide(heat_mat,
+                                np.where(col_sums == 0, 1, col_sums),
+                                where=col_sums != 0)
+
+    # --------- Create figure --------------------------------------------
+    panel_order = [p for p in panels if p in ("warnings", "heatmap", "stacked", "loudness")]
+    nrows = len(panel_order)
+    if nrows == 0:
+        print("No panels selected.")
+        return
+    # Dynamic height weighting (warnings panel very compact)
+    base_heat_extra = 0.25 * (len(heat_labels) if (heat_labels and "heatmap" in panel_order) else 0)
+    weights = []
+    for p in panel_order:
+        if p == "warnings":
+            weights.append(0.9)
+        elif p == "heatmap":
+            weights.append(3.0)
+        else:
+            weights.append(2.4)
+    fig_h = sum(weights) + base_heat_extra
+    fig_w = 16
+    import matplotlib.gridspec as gridspec
+    fig = plt.figure(figsize=(fig_w, fig_h))
+    gs = gridspec.GridSpec(nrows, 1, height_ratios=weights)
+    axes: list[Any] = []
+    for i in range(nrows):
+        if i == 0:
+            axes.append(fig.add_subplot(gs[i, 0]))
+        else:
+            axes.append(fig.add_subplot(gs[i, 0], sharex=axes[0]))  # share x for sync
+
+    # Helper for x ticks (support sub-minute ticks if tick_minutes==0)
+    if tick_minutes > 0:
+        tick_seconds = tick_minutes * 60
+        xtimes = []
+        cur = t0
+        while cur <= t_end:
+            xtimes.append(cur)
+            cur += timedelta(seconds=tick_seconds)
+    else:
+        # second-level ticks (~8 ticks)
+        desired = 8
+        if total_span <= desired:
+            step = 1
+        else:
+            step = max(1, int(total_span // desired))
+        xtimes = [t0 + timedelta(seconds=s) for s in range(0, int(total_span) + 1, step)]
+
+    # Map bin index to center time for lines/points
+    bin_centers = [start + timedelta(seconds=bin_seconds / 2) for start in bin_start_times]
+
+    # Warnings overlay setup (ensure defined before loop)
+    if overlay_warnings:
+        warnings = list(evaluator.iter_warnings(start=t0, end=t_end, source="all"))
+    else:
+        warnings = []
+    warn_colors = {
+        WarningType.ALERT: "#ff2d2d",
+        WarningType.CLUSTER: "#ffaa00",
+        WarningType.LOUDNESS: "#3399ff"
+    }
+
+    # Panel rendering
+    ax_map = {}
+    for ax, name in zip(axes, panel_order):
+        ax_map[name] = ax
+        if name == "warnings":
+            # Compact warnings lane panel
+            if not warnings:
+                ax.text(0.5, 0.5, "No warnings", ha='center', va='center', fontsize=8)
+                ax.set_yticks([])
+                ax.set_xlim(0, num_bins)
+                continue
+
+            # --- Preprocess: filter to time span
+            valid_warnings = []
+            for w in warnings:
+                try:
+                    w_ts = datetime.fromisoformat(w.timestamp)
+                except Exception:
+                    continue
+                if t0 <= w_ts <= t_end:
+                    valid_warnings.append((w, w_ts))
+            if not valid_warnings:
+                ax.text(0.5, 0.5, "No in-span warnings", ha='center', va='center', fontsize=8)
+                ax.set_yticks([])
+                ax.set_xlim(0, num_bins)
+                continue
+
+            # --- Optional time clustering first (within N seconds)
+            if warnings_time_cluster_seconds > 0:
+                clustered: list[list[tuple[Any, datetime]]] = []
+                for w, w_ts in sorted(valid_warnings, key=lambda x: x[1]):
+                    if not clustered:
+                        clustered.append([(w, w_ts)])
+                        continue
+                    last_cluster = clustered[-1]
+                    if (w_ts - last_cluster[-1][1]).total_seconds() <= warnings_time_cluster_seconds:
+                        last_cluster.append((w, w_ts))
+                    else:
+                        clustered.append([(w, w_ts)])
+                # Flatten clusters by representing each cluster via its members (we'll still process per warning below)
+                valid_warnings = [item for cluster in clustered for item in cluster]
+
+            # --- Group warnings by (merged) bin groups
+            groups: list[list[tuple[Any, datetime, int]]] = []  # list of warnings per group
+            for w, w_ts in sorted(valid_warnings, key=lambda x: x[1]):
+                b = bin_index(w_ts)
+                placed = False
+                if groups and (warnings_merge_bins > 0):
+                    # try attach to last group if within merge distance
+                    last_bins = [entry[2] for entry in groups[-1]]
+                    if any(abs(b - lb) <= warnings_merge_bins for lb in last_bins):
+                        groups[-1].append((w, w_ts, b))
+                        placed = True
+                if not placed:
+                    groups.append([(w, w_ts, b)])
+
+            # --- Render each group
+            for grp in groups:
+                # Choose representative x position = average of bin indices
+                bins = [g[2] for g in grp]
+                x_center = sum(bins) / len(bins) + 0.5
+                # Sort by severity descending for display priority
+                def _sev(wobj):
+                    return getattr(wobj, 'severity', 0.0) or 0.0
+                grp_sorted = sorted(grp, key=lambda t: _sev(t[0]), reverse=True)
+                lane_limit = warnings_max_rows
+                show_list = grp_sorted
+                overflow_count = 0
+                if len(grp_sorted) > lane_limit and warnings_cluster_overflow:
+                    overflow_count = len(grp_sorted) - (lane_limit - 1)
+                    show_list = grp_sorted[: lane_limit - 1]
+                # Place each warning
+                for lane, (w_obj, w_ts, b) in enumerate(show_list):
+                    color = warn_colors.get(w_obj.warning_type, "#ffffff")
+                    sev = _sev(w_obj)
+                    size = warning_marker_scale * (1.0 + sev * 0.4)
+                    ax.scatter(x_center, lane + 0.5, s=size, c=color, marker='s',
+                               edgecolors='black', linewidths=0.25, alpha=0.92)
+                    if show_warning_labels:
+                        if warnings_label_abbrev:
+                            label_txt = f"{w_obj.warning_type.value[0]} {w_obj.label[:10]}:{sev:.1f}" if w_obj.label else f"{w_obj.warning_type.value[0]}:{sev:.1f}"
+                        else:
+                            label_txt = f"{w_obj.warning_type.value} {w_obj.label} {sev:.2f}" if w_obj.label else f"{w_obj.warning_type.value} {sev:.2f}"
+                        ax.text(x_center, lane + 0.5, label_txt,
+                                ha='center', va='center', fontsize=6, color='white',
+                                bbox=dict(boxstyle='round,pad=0.15', fc='black', ec='none', alpha=0.55))
+                if overflow_count > 0:
+                    lane = lane_limit - 1
+                    ax.scatter(x_center, lane + 0.5, s=warning_marker_scale * 0.9, c='#444444', marker='o',
+                               edgecolors='black', linewidths=0.25, alpha=0.85)
+                    ax.text(x_center, lane + 0.5, f"+{overflow_count}", ha='center', va='center', fontsize=6,
+                            color='white', bbox=dict(boxstyle='round,pad=0.15', fc='black', ec='none', alpha=0.5))
+
+            ax.set_ylim(0, warnings_max_rows)
+            ax.set_yticks([])
+            ax.set_ylabel("Warn")
+            ax.set_title("Warnings / Alerts (clustered)")
+            continue  # go to next panel
+        if name == "heatmap" and heat_mat is not None:
+            # DEBUG: verify order before rendering
+            if heatmap_debug:
+                print("[heatmap_debug] Group order:", heat_labels)
+                for i, gname in enumerate(heat_labels):
+                    row_sum = float(np.nansum(heat_mat[i]))
+                    print(f"[heatmap_debug] row {i} -> {gname}: total_seconds={row_sum:.1f}")
+
+            vmax = max_cell_seconds if (max_cell_seconds and max_cell_seconds > 0) else None
+            if vmax:
+                norm = plt.matplotlib.colors.Normalize(vmin=0, vmax=vmax, clip=False)  # type: ignore
+                cmap = plt.get_cmap("magma")
+                im = ax.imshow(heat_mat,
+                               aspect='auto',
+                               interpolation='nearest',
+                               cmap=cmap,
+                               norm=norm,
+                               origin='upper')  # explicit
+                cbar = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.01, extend='max')
+                cbar.set_label("Sec (capped)")
+            else:
+                im = ax.imshow(heat_mat,
+                               aspect='auto',
+                               interpolation='nearest',
+                               cmap='magma',
+                               origin='upper')
+                cbar = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.01)
+                cbar.set_label("Sec")
+            # Ticks: integer centers
+            ax.set_yticks(np.arange(len(heat_labels)))
+            ax.set_yticklabels(heat_labels)
+            ax.set_ylabel("Groups" if group_mode else "Labels")
+            ax.set_title("Group Duration Heatmap" if group_mode else "Label Duration Heatmap")
+
+            if len(heat_labels) <= 15 and num_bins <= 160:
+                vmax_cell = np.nanmax(heat_mat)
+                thresh = 0.55 * vmax_cell if vmax_cell > 0 else 0
+                for i in range(heat_mat.shape[0]):
+                    for j in range(heat_mat.shape[1]):
+                        v = heat_mat[i, j]
+                        if v <= 0:
+                            continue
+                        if max_cell_seconds and vmax and v > max_cell_seconds:
+                            txt = f"{int(max_cell_seconds)}+"
+                            color = "black"
+                        else:
+                            txt = f"{v:.0f}" if v >= 10 else f"{v:.1f}"
+                            color = "white" if v >= thresh else "black"
+                        ax.text(j, i, txt,
+                                ha='center', va='center', fontsize=7, color=color)
+
+            ax.set_xlim(0, num_bins)
+
+        elif name == "stacked" and stacked_mat is not None:
+            # Stacked area
+            x = np.arange(num_bins)
+            cum = np.zeros(num_bins)
+            for i, lab in enumerate(heat_labels):
+                y = stacked_mat[i]
+                ax.fill_between(x, cum, cum + y, step='mid', label=lab, alpha=0.8)
+                cum += y
+            ax.set_ylabel("Fraction")
+            ax.set_ylim(0, 1)
+            ax.set_title("Group Activity Fraction (Stacked)")
+            ax.legend(loc='upper left', fontsize=8, ncol=2, frameon=False)
+
+        elif name == "loudness" and loud_window_mean is not None:
+            x = np.arange(num_bins)
+            ax.plot(x, loud_window_mean, label="Window Mean", color="#3399ff")
+            if baseline_mean is not None:
+                ax.axhline(baseline_mean, color="#666666", linestyle="--", linewidth=1, label="Baseline μ")
+            if threshold_line is not None:
+                ax.axhline(threshold_line, color="#ff5555", linestyle="--", linewidth=1, label="μ + kσ")
+            ax.set_ylabel("Loudness")
+            ax.set_title("Adaptive Loudness")
+            ax.legend(loc='upper left', fontsize=8, frameon=False)
+
+        # Shared x tick formatting (defer for warnings panel until after loop)
+        if name != "warnings":
+            ax.set_xticks([ (dt - t0).total_seconds() // bin_seconds + 0.5 for dt in xtimes ])
+            if tick_minutes == 0:
+                # show seconds for very short windows
+                ax.set_xticklabels([f"{int((dt - t0).total_seconds())}s" for dt in xtimes], rotation=45, ha='right')
+            else:
+                ax.set_xticklabels([dt.strftime(time_format) for dt in xtimes], rotation=45, ha='right')
+
+        # Overlay warnings
+        if overlay_warnings and warnings:
+            for w in warnings:
+                try:
+                    w_ts = datetime.fromisoformat(w.timestamp)
+                except Exception:
+                    continue
+                if not (t0 <= w_ts <= t_end):
+                    continue
+                b = bin_index(w_ts)
+                ax.axvline(b + 0.5,
+                           color=warn_colors.get(w.warning_type, "#ffffff"),
+                           linestyle='-',
+                           linewidth=1.1,
+                           alpha=0.85)
+
+    # Add a single legend (top axis) if overlay active
+    if overlay_warnings and warnings and panel_order:
+        from matplotlib.lines import Line2D
+        legend_elems = [
+            Line2D([0], [0], color=c, lw=2, label=wt.value)
+            for wt, c in warn_colors.items()
+        ]
+        axes[0].legend(handles=legend_elems, loc='upper right', fontsize=8, frameon=False)
+
+    # Apply x ticks to warnings panel (top) if present
+    if panel_order and panel_order[0] == "warnings":
+        top_ax = ax_map["warnings"]
+        top_ax.set_xticks([ (dt - t0).total_seconds() // bin_seconds + 0.5 for dt in xtimes ])
+        if tick_minutes == 0:
+            top_ax.set_xticklabels([f"{int((dt - t0).total_seconds())}s" for dt in xtimes], rotation=45, ha='right')
+        else:
+            top_ax.set_xticklabels([dt.strftime(time_format) for dt in xtimes], rotation=45, ha='right')
+    axes[-1].set_xlabel(f"Time (bin={bin_seconds}s)")
+    plt.tight_layout()
+    plt.show()
+
+def plot_multi_day_overview(evaluator: ContextualMetaModelEvaluator,
+                            days: int = 14,
+                            end_at: datetime | None = None,
+                            bin_seconds: int = MULTI_DAY_BIN_SECONDS,
+                            tick_minutes: int = MULTI_DAY_TICK_MIN,
+                            group_labels: bool = True,
+                            overlay_warnings: bool = True,
+                            target_max_bins: int = MULTI_DAY_TARGET_MAX_BINS,
+                            heatmap_debug: bool = False) -> None:
+    """
+    Wrapper around plot_night_overview that shows a longer period (multiple days)
+    on a continuous timeline using adaptive resolution.
+    """
+    events = list(evaluator.events)
+    if not events:
+        print("No events; nothing to plot.")
+        return
+
+    def _ts(ev: dict[str, Any]) -> datetime:
+        return datetime.fromisoformat(ev["timestamp"])
+
+    full_start = _ts(events[0])
+    full_end = _ts(events[-1])
+
+    if end_at is None:
+        end_at = full_end
+    start_at = max(full_start, end_at - timedelta(days=days))
+    if start_at >= end_at:
+        print("Invalid period window for multi‑day overview.")
+        return
+
+    # Reuse existing function with windowing and adaptive resolution
+    plot_night_overview(
+        evaluator,
+        bin_seconds=bin_seconds,
+        tick_minutes=tick_minutes,
+        group_labels=group_labels,
+        overlay_warnings=overlay_warnings,
+        window_start=start_at,
+        window_end=end_at,
+        adapt_resolution=True,
+        target_max_bins=target_max_bins,
+        heatmap_debug=heatmap_debug,
+        time_format="%m-%d %H:%M"
+    )
+
+def main() -> None:
+    files: List[Path] = []
+    for f in INPUT_FILES:
+        files.append(f if f.is_absolute() else (SCRIPT_PATH / f))
+    
+    evaluator = ContextualMetaModelEvaluator(dominant_label_floor=0.95, drop_below_floor=False, 
+                                             write_nightly_logs=False, enable_adaptive_loudness=True)
+    total = 0
+    for fp in files:
+        if not fp.exists():
+            print(f"! missing {fp}")
+            continue
+        if SIMULATE_REALTIME:
+            for ev in iter_events(fp):
+                res = evaluator.evaluate(ev)
+                if res.warning_type is not None:
+                    print(f"{ev['timestamp']} | {res.warning_type:<7} | severity: {res.severity:.2f} | {res.label:<15} | c: {res.confidence:.2f} | {', '.join(res.contributing_factors)}")
+        else:
+            processed, added_warnings = evaluator.evaluate_batch(
+                iter_events(fp),
+                fast_plot_only=False,          # fast ingest for plotting (no warnings)
+                disable_warnings=False,        # skip alert/cluster/loudness decisions
+                disable_group_severity=False,  # skip group severity calculations
+                disable_adaptive_loudness=False  # keep baseline updates if you want loudness plot
+            )
+            total += processed
+            print(f"[replay] {fp.name}: processed={processed}, warnings_added={added_warnings}")
+
+
+    # Multi‑day continuous view (enable via MULTI_DAY_ENABLED)
+    if MULTI_DAY_ENABLED:
+        # Determine how many days to include based on data span
+        data_span_days = (datetime.fromisoformat(evaluator.events[-1]["timestamp"]) -
+                          datetime.fromisoformat(evaluator.events[0]["timestamp"])).days + 1
+        plot_multi_day_overview(evaluator,
+                                days=data_span_days,
+                                bin_seconds=MULTI_DAY_BIN_SECONDS,
+                                tick_minutes=MULTI_DAY_TICK_MIN,
+                                target_max_bins=MULTI_DAY_TARGET_MAX_BINS,
+                                group_labels=True,
+                                overlay_warnings=True)  # warnings were disabled above
+
+    else:    
+        # print_label_group_summary(evaluator)
+        plot_night_overview(evaluator, adapt_resolution=False)
+        plot_grouped_events(evaluator, group_labels=False)
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

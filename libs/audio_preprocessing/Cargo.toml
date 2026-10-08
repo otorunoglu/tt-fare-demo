@@ -1,0 +1,28 @@
+[package]
+name = "audio_preprocessing"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "audio_preprocessing"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+python = ["dep:pyo3", "dep:numpy"]
+
+[dependencies]
+# PyO3 for Python bindings
+pyo3 = { version = "0.21.2", features = ["extension-module"], optional = true }
+numpy = { version = "0.21", optional = true }
+
+# Audio processing
+symphonia = { version = "0.5.3", features = ["all"] }
+rubato = "0.14.1"
+anyhow = "1.0"
+thiserror = "1.0"
+log = "0.4"
+env_logger = "0.11"
+ndarray = "0.15"  # Match inference crate version if possible, but 0.15 is standard for numpy crate compat
+chrono = { version = "0.4", features = ["serde"] }
+
